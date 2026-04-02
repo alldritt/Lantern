@@ -296,10 +296,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         compileBlock(stmt.body)
 
-        // Loop back
-        let backJump = chunk.count
+        // Loop back to condition check
         chunk.write(.loop)
-        let offset = backJump - loopStart + 3
+        let offset = loopStart - (chunk.count + 2) // negative: jump backward
         chunk.writeI16(Int16(offset))
 
         Instruction.patchJump(at: exitJump, in: &chunk)
@@ -371,10 +370,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
         chunk.write(.add)
         Instruction.storeLocal(indexSlot, into: &chunk)
 
-        // Loop back
-        let backJump = chunk.count
+        // Loop back to condition check
         chunk.write(.loop)
-        let offset = backJump - loopStart + 3
+        let offset = loopStart - (chunk.count + 2)
         chunk.writeI16(Int16(offset))
 
         Instruction.patchJump(at: exitJump, in: &chunk)
@@ -774,7 +772,13 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
     private func compileIdentifier(_ ident: IdentifierNode) {
         if let local = scopeTracker.resolve(ident.name) {
-            Instruction.loadLocal(local.slot, into: &chunk)
+            if local.depth == 0 {
+                // Top-level variables are stored as globals
+                let nameIndex = chunk.constantPool.addString(ident.name)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+            } else {
+                Instruction.loadLocal(local.slot, into: &chunk)
+            }
         } else {
             let nameIndex = chunk.constantPool.addString(ident.name)
             Instruction.loadGlobal(nameIndex, into: &chunk)
@@ -919,7 +923,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
                 }
                 chunk.write(.dup) // Keep value on stack for expression result
-                Instruction.storeLocal(local.slot, into: &chunk)
+                if local.depth == 0 {
+                    let nameIndex = chunk.constantPool.addString(ident.name)
+                    Instruction.storeGlobal(nameIndex, into: &chunk)
+                } else {
+                    Instruction.storeLocal(local.slot, into: &chunk)
+                }
             } else {
                 chunk.write(.dup)
                 let nameIndex = chunk.constantPool.addString(ident.name)

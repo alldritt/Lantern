@@ -173,7 +173,12 @@ public final class VM: @unchecked Sendable {
             try stack.push(stack[basePointer + Int(slot)]); ip += 3
         case .storeLocal:
             guard let slot = readU16(at: ip + 1) else { throw decodeError() }
-            let idx = basePointer + Int(slot); stack[idx] = stack.pop(); ip += 3
+            let idx = basePointer + Int(slot)
+            let value = stack.pop()
+            // Ensure the stack extends to cover this slot
+            while stack.count <= idx { try stack.push(.nil_) }
+            stack[idx] = value
+            ip += 3
         case .loadGlobal:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
             guard let v = environment.getGlobal(name) else { throw InterpreterError.undefinedVariable(name, at: loc()) }

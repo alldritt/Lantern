@@ -63,7 +63,15 @@ final class SyntaxTranslator: SyntaxVisitor {
         case .stmt(let stmt):
             return translateStmt(stmt)
         case .expr(let expr):
-            if let e = translateExpr(ExprSyntax(expr)) {
+            let exprSyntax = ExprSyntax(expr)
+            // if/switch at top level arrive as expressions in SwiftSyntax 600
+            if let ifExpr = exprSyntax.as(IfExprSyntax.self) {
+                return translateIfExpr(ifExpr)
+            }
+            if let switchExpr = exprSyntax.as(SwitchExprSyntax.self) {
+                return translateSwitchExpr(switchExpr)
+            }
+            if let e = translateExpr(exprSyntax) {
                 return ExpressionStatementNode(expression: e, location: self.location(of: expr))
             }
             return nil
@@ -396,6 +404,13 @@ final class SyntaxTranslator: SyntaxVisitor {
         } else if let switchExpr = stmt.as(SwitchExprSyntax.self) {
             return translateSwitchExpr(switchExpr)
         } else if let exprStmt = stmt.as(ExpressionStmtSyntax.self) {
+            // if/switch wrapped in ExpressionStmtSyntax — handle as statements
+            if let ifExpr = exprStmt.expression.as(IfExprSyntax.self) {
+                return translateIfExpr(ifExpr)
+            }
+            if let switchExpr = exprStmt.expression.as(SwitchExprSyntax.self) {
+                return translateSwitchExpr(switchExpr)
+            }
             if let e = translateExpr(exprStmt.expression) {
                 return ExpressionStatementNode(expression: e, location: self.location(of: exprStmt))
             }
