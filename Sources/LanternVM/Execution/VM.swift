@@ -547,8 +547,8 @@ public final class VM: @unchecked Sendable {
             switch name {
             case "count": return .int(arr.count)
             case "isEmpty": return .bool(arr.isEmpty)
-            case "first": return arr.first ?? .nil_
-            case "last": return arr.last ?? .nil_
+            case "first": return .optional(arr.first)
+            case "last": return .optional(arr.last)
             default: throw InterpreterError.undefinedProperty(name, on: "Array", at: loc())
             }
         case .string(let s):
@@ -580,7 +580,7 @@ public final class VM: @unchecked Sendable {
         case (.array(let arr), .int(let i)):
             guard i >= 0 && i < arr.count else { throw InterpreterError.indexOutOfBounds(i, count: arr.count, at: loc()) }
             return arr[i]
-        case (.dictionary(let d), .string(let k)): return d[k] ?? .nil_
+        case (.dictionary(let d), .string(let k)): return .optional(d[k])
         default: throw InterpreterError.typeMismatch("Cannot subscript \(collection.typeName) with \(index.typeName)", at: loc())
         }
     }
