@@ -365,20 +365,23 @@ public final class BytecodeCompiler: @unchecked Sendable {
             compileStatement(s)
         }
 
+        // Continue target: jump here to do increment then re-check
+        let continueTarget = chunk.count
+
         // Increment loop variable
         Instruction.loadLocal(varSlot, into: &chunk)
         Instruction.constInt(1, into: &chunk)
         chunk.write(.add)
         Instruction.storeLocal(varSlot, into: &chunk)
 
-        // Loop back
+        // Loop back to condition
         chunk.write(.loop)
         chunk.writeI16(Int16(loopStart - (chunk.count + 2)))
 
         Instruction.patchJump(at: exitJump, in: &chunk)
 
         for bp in breakTargets { Instruction.patchJump(at: bp, in: &chunk) }
-        for cp in continueTargets { chunk.patchI16(at: cp, value: Int16(loopStart - (cp + 2))) }
+        for cp in continueTargets { chunk.patchI16(at: cp, value: Int16(continueTarget - (cp + 2))) }
 
         let removed = scopeTracker.popScope()
         for _ in removed { chunk.write(.pop) }

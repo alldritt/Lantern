@@ -427,27 +427,26 @@ public final class VM: @unchecked Sendable {
 
     // MARK: - Functions
 
-    private func callFunction(argCount: Int) throws {
+    /// returnIP: where to resume after the function returns. Pass nil to use ip + 2 (normal CALL).
+    private func callFunction(argCount: Int, returnIP: Int? = nil) throws {
         let callee = stack.peek(argCount)
 
         switch callee {
         case .nativeFunction(let native):
-            // Collect arguments
             var args: [Value] = []
             for _ in 0..<argCount { args.insert(stack.pop(), at: 0) }
             _ = stack.pop() // pop the function itself
             let result = try native.body(args)
             try stack.push(result)
-            ip += 2 // advance past CALL opcode
+            ip = returnIP ?? (ip + 2)
 
         case .closure(let ref):
             guard callStack.count < maxCallDepth else {
                 throw InterpreterError.stackOverflow(at: loc())
             }
-            // Stack layout: [..., callee, arg0, arg1, ..., argN-1]
-            // basePointer = start of args (slot 0 = first arg)
             let bp = stack.count - argCount
-            let frame = CallFrame(function: ref.function, ip: ip + 2, basePointer: bp, captures: ref.captures)
+            let retIP = returnIP ?? (ip + 2)
+            let frame = CallFrame(function: ref.function, ip: retIP, basePointer: bp, captures: ref.captures)
             callStack.append(frame)
             // Allocate extra local slots beyond parameters
             let extra = max(0, Int(ref.function.localCount) - argCount)
@@ -499,6 +498,25 @@ public final class VM: @unchecked Sendable {
             case "removeLast":
                 _ = arr.popLast()
                 result = .array(arr)
+            case "remove":
+                guard case .int(let idx) = args.first, idx >= 0 && idx < arr.count else {
+                    result = .array(arr); break
+                }
+                arr.remove(at: idx)
+                result = .array(arr)
+            case "sorted":
+                // Simple sort for comparable value types
+                let sorted = arr.sorted { a, b in
+                    if let la = a.intValue, let lb = b.intValue { return la < lb }
+                    if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
+                    if case .string(let la) = a, case .string(let lb) = b { return la < lb }
+                    return false
+                }
+                result = .array(sorted)
+            case "joined":
+                // joined(separator:)
+                let sep = (args.first?.stringValue) ?? ""
+                result = .string(arr.compactMap { $0.stringValue }.joined(separator: sep))
             default:
                 throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
             }
@@ -544,8 +562,8 @@ public final class VM: @unchecked Sendable {
                 try stack.push(method)
                 try stack.push(receiver)
                 for arg in args { try stack.push(arg) }
-                ip += 4 // advance past callMethod opcode BEFORE dispatching
-                try callFunction(argCount: args.count + 1) // +1 for self
+                let retIP = ip + 4 // return address is past callMethod opcode
+                try callFunction(argCount: args.count + 1, returnIP: retIP) // +1 for self
                 return true // IP handled by callFunction
             }
             throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
