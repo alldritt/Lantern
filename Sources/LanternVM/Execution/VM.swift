@@ -395,10 +395,16 @@ public final class VM: @unchecked Sendable {
     }
     private func orderedCmp(_ op: (Double, Double) -> Bool) throws {
         let b = stack.pop(), a = stack.pop()
-        guard let l = a.doubleValue, let r = b.doubleValue else {
-            throw InterpreterError.typeMismatch("Cannot compare \(a.typeName) and \(b.typeName)", at: loc())
+        // Numeric comparison
+        if let l = a.doubleValue, let r = b.doubleValue {
+            try stack.push(.bool(op(l, r))); return
         }
-        try stack.push(.bool(op(l, r)))
+        // String comparison (use same Double op on string comparison result)
+        if case .string(let l) = a, case .string(let r) = b {
+            let cmp = l < r ? -1.0 : (l > r ? 1.0 : 0.0)
+            try stack.push(.bool(op(cmp, 0.0))); return
+        }
+        throw InterpreterError.typeMismatch("Cannot compare \(a.typeName) and \(b.typeName)", at: loc())
     }
 
     // MARK: - Functions
@@ -489,6 +495,16 @@ public final class VM: @unchecked Sendable {
             case "contains":
                 guard case .string(let sub) = args.first else { result = .bool(false); break }
                 result = .bool(s.contains(sub))
+            case "replacingOccurrences":
+                guard args.count >= 2, case .string(let target) = args[0], case .string(let repl) = args[1] else {
+                    result = .string(s); break
+                }
+                result = .string(s.replacingOccurrences(of: target, with: repl))
+            case "split":
+                guard case .string(let sep) = args.first else { result = .array([]); break }
+                result = .array(s.split(separator: sep).map { .string(String($0)) })
+            case "trimmingCharacters":
+                result = .string(s.trimmingCharacters(in: .whitespacesAndNewlines))
             default:
                 throw InterpreterError.undefinedMethod(name, on: "String", at: loc())
             }

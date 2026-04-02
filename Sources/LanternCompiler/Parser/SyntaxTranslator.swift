@@ -927,50 +927,113 @@ final class SyntaxTranslator: SyntaxVisitor {
                 return BinaryExpressionNode(op: op, left: left, right: right, location: loc)
             }
         }
-        // For 5-element: handle "target = expr op expr" (assignment with binary RHS)
-        if elements.count == 5 {
-            let opText1 = elements[1].trimmedDescription
-            if opText1 == "=" {
-                // target = a op b
-                guard let target = translateExpr(elements[0]) else { return nil }
-                let opText2 = elements[3].trimmedDescription
-                guard let a = translateExpr(elements[2]),
-                      let b = translateExpr(elements[4]),
-                      let op = BinaryOperator(rawValue: opText2) else { return nil }
-                let rhs = BinaryExpressionNode(op: op, left: a, right: b, location: self.location(of: expr))
-                return AssignmentNode(target: target, value: rhs, location: self.location(of: expr))
-            }
-        }
-        // For longer sequences, fold left-to-right (simplified — doesn't handle precedence)
+        // For 5+ element sequences, use precedence-aware folding
         if elements.count >= 5 && elements.count % 2 == 1 {
-            guard var result = translateExpr(elements[0]) else { return nil }
-            var i = 1
-            while i + 1 < elements.count {
-                let opText = elements[i].trimmedDescription
-                if opText == "=" {
-                    // Assignment: everything after = is the value
-                    // Fold remaining elements
-                    guard var rhs = translateExpr(elements[i + 1]) else { break }
-                    var j = i + 2
-                    while j + 1 < elements.count {
-                        let rhsOp = elements[j].trimmedDescription
-                        guard let rhsRight = translateExpr(elements[j + 1]),
-                              let op = BinaryOperator(rawValue: rhsOp) else { break }
-                        rhs = BinaryExpressionNode(op: op, left: rhs, right: rhsRight, location: self.location(of: expr))
-                        j += 2
-                    }
-                    return AssignmentNode(target: result, value: rhs, location: self.location(of: expr))
-                }
-                guard let right = translateExpr(elements[i + 1]),
-                      let op = BinaryOperator(rawValue: opText) else { break }
-                result = BinaryExpressionNode(op: op, left: result, right: right, location: self.location(of: expr))
-                i += 2
-            }
-            return result
+            return foldSequenceWithPrecedence(elements, location: self.location(of: expr))
         }
         // Fallback
         if let first = elements.first { return translateExpr(first) }
         return nil
+    }
+
+    // MARK: - Precedence-Aware Sequence Folding
+
+    private func operatorPrecedence(_ op: String) -> Int {
+        switch op {
+        case "=", "+=", "-=", "*=", "/=", "%=": return 0
+        case "||": return 1
+        case "&&": return 2
+        case "==", "!=", "<", ">", "<=", ">=": return 3
+        case "??": return 4
+        case "..<", "...": return 5
+        case "+", "-": return 6
+        case "*", "/", "%": return 7
+        case "<<", ">>": return 8
+        default: return 6
+        }
+    }
+
+    private func foldSequenceWithPrecedence(_ elements: [ExprSyntax], location: LanternSourceLocation) -> ExpressionNode? {
+        // Convert to arrays of operands and operators
+        var operands: [ExpressionNode] = []
+        var operators: [(text: String, index: Int)] = []
+
+        for (i, elem) in elements.enumerated() {
+            if i % 2 == 0 {
+                // Operand
+                guard let expr = translateExpr(elem) else { return nil }
+                operands.append(expr)
+            } else {
+                // Operator
+                operators.append((text: elem.trimmedDescription, index: i))
+            }
+        }
+
+        guard !operators.isEmpty else { return operands.first }
+
+        // Check for assignment first (lowest precedence, right-associative)
+        if let assignIdx = operators.firstIndex(where: { $0.text == "=" || $0.text == "+=" || $0.text == "-=" || $0.text == "*=" || $0.text == "/=" || $0.text == "%=" }) {
+            let target = assignIdx == 0 ? operands[0] : foldBinaryRange(operands: operands, operators: operators, from: 0, to: assignIdx - 1)
+            let value = assignIdx == operators.count - 1 ? operands[assignIdx + 1] : foldBinaryRange(operands: operands, operators: operators, from: assignIdx + 1, to: operators.count - 1)
+            let opText = operators[assignIdx].text
+
+            guard let target, let value else { return nil }
+
+            if opText == "=" {
+                return AssignmentNode(target: target, value: value, location: location)
+            }
+            // Compound assignment
+            let baseOp: BinaryOperator
+            switch opText {
+            case "+=": baseOp = .add; case "-=": baseOp = .subtract
+            case "*=": baseOp = .multiply; case "/=": baseOp = .divide
+            case "%=": baseOp = .modulo; default: baseOp = .add
+            }
+            let binExpr = BinaryExpressionNode(op: baseOp, left: target, right: value, location: location)
+            return AssignmentNode(target: target, value: binExpr, location: location)
+        }
+
+        // Fold by precedence (highest first)
+        return foldBinaryRange(operands: operands, operators: operators, from: 0, to: operators.count - 1)
+    }
+
+    private func foldBinaryRange(operands: [ExpressionNode], operators: [(text: String, index: Int)], from: Int, to: Int) -> ExpressionNode? {
+        if from > to { return operands[from] }
+        if from == to {
+            let opText = operators[from].text
+            guard let op = BinaryOperator(rawValue: opText) else { return nil }
+            return BinaryExpressionNode(op: op, left: operands[from], right: operands[from + 1], location: operands[from].location)
+        }
+
+        // Find the lowest-precedence operator (it becomes the root)
+        var minPrec = Int.max
+        var minIdx = from
+        for i in from...to {
+            let prec = operatorPrecedence(operators[i].text)
+            if prec <= minPrec { // <= for left-associativity
+                minPrec = prec
+                minIdx = i
+            }
+        }
+
+        let left: ExpressionNode?
+        if minIdx == from {
+            left = operands[from]
+        } else {
+            left = foldBinaryRange(operands: operands, operators: operators, from: from, to: minIdx - 1)
+        }
+
+        let right: ExpressionNode?
+        if minIdx == to {
+            right = operands[to + 1]
+        } else {
+            right = foldBinaryRange(operands: operands, operators: operators, from: minIdx + 1, to: to)
+        }
+
+        guard let left, let right else { return nil }
+        let opText = operators[minIdx].text
+        guard let op = BinaryOperator(rawValue: opText) else { return nil }
+        return BinaryExpressionNode(op: op, left: left, right: right, location: left.location)
     }
 
     private func translateTernaryExpr(_ expr: TernaryExprSyntax) -> TernaryExpressionNode? {
