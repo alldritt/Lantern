@@ -74,6 +74,12 @@ public final class ScopeTracker: @unchecked Sendable {
         nextSlot = 0
     }
 
+    /// Save the current slot counter (for function body compilation).
+    public func saveSlotState() -> UInt16 { nextSlot }
+
+    /// Restore slot counter after function body compilation.
+    public func restoreSlotState(_ saved: UInt16) { nextSlot = saved }
+
     /// Reserve a specific number of initial slots (e.g., for function parameters).
     public func reserveSlots(_ count: UInt16) {
         if nextSlot < count {

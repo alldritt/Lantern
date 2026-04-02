@@ -587,7 +587,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
 
-        // Compile function body inline
+        // Compile function body inline — each function has its own slot space
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
         scopeTracker.pushScope()
         for param in decl.parameters {
             scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
@@ -602,8 +604,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             chunk.write(.returnVoid)
         }
 
-        let removed = scopeTracker.popScope()
-        _ = removed
+        _ = scopeTracker.popScope()
+        scopeTracker.restoreSlotState(savedSlots)
 
         let bodyEnd = chunk.count
         Instruction.patchJump(at: jumpOver, in: &chunk)
@@ -931,6 +933,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
 
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
         scopeTracker.pushScope()
         for param in closure.parameters {
             scopeTracker.declare(name: param, isMutable: false)
@@ -956,6 +960,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
         }
 
         _ = scopeTracker.popScope()
+        scopeTracker.restoreSlotState(savedSlots)
         let bodyEnd = chunk.count
         Instruction.patchJump(at: jumpOver, in: &chunk)
 
