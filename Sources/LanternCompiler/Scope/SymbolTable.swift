@@ -19,6 +19,11 @@ public struct SymbolRecord: Sendable {
         self.kind = kind
         self.location = location
     }
+
+    public var isType: Bool {
+        if case .type = kind { return true }
+        return false
+    }
 }
 
 /// Global symbol table for resolving top-level functions, types, and globals.

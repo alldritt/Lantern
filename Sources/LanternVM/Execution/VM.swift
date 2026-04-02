@@ -240,8 +240,8 @@ public final class VM: @unchecked Sendable {
         case .callMethod:
             guard let ni = readU16(at: ip + 1), let argc = readU8(at: ip + 3),
                   let methodName = program.constantPool.methodName(at: ni) else { throw decodeError() }
-            try callMethod(methodName, argCount: Int(argc))
-            ip += 4
+            let handled = try callMethod(methodName, argCount: Int(argc))
+            if !handled { ip += 4 } // if callMethod dispatched to a function, IP was already set
 
         // Host bridge
         case .callHost:
@@ -473,7 +473,9 @@ public final class VM: @unchecked Sendable {
 
     // MARK: - Method Calls
 
-    private func callMethod(_ name: String, argCount: Int) throws {
+    /// Returns true if dispatched to a function (IP already set), false if result pushed and IP needs advancing.
+    @discardableResult
+    private func callMethod(_ name: String, argCount: Int) throws -> Bool {
         // Collect args (they're above the receiver on the stack)
         var args: [Value] = []
         for _ in 0..<argCount { args.insert(stack.pop(), at: 0) }
@@ -542,12 +544,14 @@ public final class VM: @unchecked Sendable {
                 try stack.push(method)
                 try stack.push(receiver)
                 for arg in args { try stack.push(arg) }
+                ip += 4 // advance past callMethod opcode BEFORE dispatching
                 try callFunction(argCount: args.count + 1) // +1 for self
-                return
+                return true // IP handled by callFunction
             }
             throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
         }
         try stack.push(result)
+        return false
     }
 
     // MARK: - Property Access

@@ -826,15 +826,23 @@ public final class BytecodeCompiler: @unchecked Sendable {
         emitLocation(decl.location)
         let typeIndex = chunk.constantPool.addTypeName(decl.name)
 
+        // Store enum case names in the constant pool so the interpreter can register them
+        // We use properties in the TypeDebugInfo to carry case names (for enum kind)
+        // The interpreter reads these and creates EnumCaseRef globals
+
+        // Compile methods
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
-                compileFunctionDeclaration(funcDecl)
+                compileTypeMethod(funcDecl, typeName: decl.name)
             }
         }
 
+        // For enums, store case names as properties (PropertyInfo with name = case name)
+        let caseInfos = decl.cases.map { PropertyInfo(name: $0.name, isMutable: false) }
         typeDebugInfo.append(TypeDebugInfo(
             name: decl.name,
             kind: .enum,
+            properties: caseInfos,
             methods: decl.members.compactMap { ($0 as? FunctionDeclarationNode)?.name },
             conformances: decl.conformances,
             sourceRange: (start: decl.location, end: decl.location)
@@ -872,9 +880,18 @@ public final class BytecodeCompiler: @unchecked Sendable {
         } else if let ident = expr as? IdentifierNode {
             compileIdentifier(ident)
         } else if let member = expr as? MemberAccessNode {
-            compileExpression(member.object)
-            let nameIndex = chunk.constantPool.addPropertyName(member.member)
-            Instruction.getProperty(nameIndex, into: &chunk)
+            // Check if this is a type member access (e.g., Direction.north)
+            if let ident = member.object as? IdentifierNode,
+               symbolTable.lookup(ident.name)?.isType == true {
+                // Qualified name: "TypeName.member"
+                let qualifiedName = "\(ident.name).\(member.member)"
+                let nameIndex = chunk.constantPool.addString(qualifiedName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+            } else {
+                compileExpression(member.object)
+                let nameIndex = chunk.constantPool.addPropertyName(member.member)
+                Instruction.getProperty(nameIndex, into: &chunk)
+            }
         } else if expr is SelfNode {
             Instruction.loadLocal(0, into: &chunk) // self is always slot 0
         } else if let typeRef = expr as? TypeReferenceNode {

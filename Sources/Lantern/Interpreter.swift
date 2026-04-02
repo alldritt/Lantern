@@ -82,7 +82,8 @@ public final class Interpreter {
     @discardableResult
     public func execute(program: CompiledProgram) -> Result<Value, InterpreterError> {
         vm.load(program)
-        registerBuiltins() // re-register after load clears environment
+        registerBuiltins()
+        registerEnumCases(from: program)
         vm.run()
 
         switch vm.state {
@@ -102,6 +103,17 @@ public final class Interpreter {
         fileName: String = "<expr>"
     ) -> Result<Value, InterpreterError> {
         run(source: expression, fileName: fileName)
+    }
+
+    /// Register enum case values as globals from the compiled program's type table.
+    private func registerEnumCases(from program: CompiledProgram) {
+        for typeInfo in program.typeTable where typeInfo.kind == .enum {
+            for prop in typeInfo.properties {
+                let qualifiedName = "\(typeInfo.name).\(prop.name)"
+                let caseRef = EnumCaseRef(typeName: typeInfo.name, caseName: prop.name)
+                vm.environment.setGlobal(qualifiedName, value: .enumCase(caseRef))
+            }
+        }
     }
 
     /// Reset interpreter state, clearing all globals and history.
