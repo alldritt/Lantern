@@ -198,13 +198,14 @@ public final class BytecodeCompiler: @unchecked Sendable {
             chunk.write(.constNil)
         }
 
-        let slot = scopeTracker.declare(name: decl.name, isMutable: decl.isMutable, typeAnnotation: decl.typeAnnotation)
-
         if scopeTracker.currentDepth == 0 {
-            // Global variable
+            // Global variable — store in environment, don't allocate a stack slot
+            symbolTable.register(decl.name, kind: .global(isMutable: decl.isMutable), location: decl.location)
             let nameIndex = chunk.constantPool.addString(decl.name)
             Instruction.storeGlobal(nameIndex, into: &chunk)
         } else {
+            // Local variable — allocate a stack slot
+            let slot = scopeTracker.declare(name: decl.name, isMutable: decl.isMutable, typeAnnotation: decl.typeAnnotation)
             Instruction.storeLocal(slot, into: &chunk)
         }
     }
@@ -318,39 +319,108 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
     private func compileForInStatement(_ stmt: ForInStatementNode) {
         emitLocation(stmt.location)
-        // Simplified: compile iterable, then iterate
-        // For now, emit the range/array and use loop opcodes
+
+        // Check if iterable is a range expression (0..<n or 0...n)
+        if let rangeExpr = stmt.iterable as? BinaryExpressionNode,
+           (rangeExpr.op == .halfOpenRange || rangeExpr.op == .closedRange) {
+            compileForInRange(stmt, rangeExpr: rangeExpr)
+            return
+        }
+
+        // Array iteration: evaluate iterable, iterate with index
+        compileForInArray(stmt)
+    }
+
+    private func compileForInRange(_ stmt: ForInStatementNode, rangeExpr: BinaryExpressionNode) {
+        let isInclusive = rangeExpr.op == .closedRange
+
+        scopeTracker.pushScope()
+
+        // Compile and store end value
+        compileExpression(rangeExpr.right)
+        let endSlot = scopeTracker.declare(name: "__end", isMutable: false)
+        Instruction.storeLocal(endSlot, into: &chunk)
+
+        // Compile and store start as loop variable
+        compileExpression(rangeExpr.left)
+        let varSlot = scopeTracker.declare(name: stmt.variableName, isMutable: true)
+        Instruction.storeLocal(varSlot, into: &chunk)
+
+        let loopStart = chunk.count
+
+        // Check: variable < end (or <= for inclusive)
+        Instruction.loadLocal(varSlot, into: &chunk)
+        Instruction.loadLocal(endSlot, into: &chunk)
+        chunk.write(isInclusive ? .lte : .lt)
+        let exitJump = Instruction.jumpIfFalse(into: &chunk)
+
+        loopDepth += 1
+        let oldBreakTargets = breakTargets
+        let oldContinueTargets = continueTargets
+        breakTargets = []
+        continueTargets = []
+
+        // Compile body
+        for s in stmt.body.statements {
+            compileStatement(s)
+        }
+
+        // Increment loop variable
+        Instruction.loadLocal(varSlot, into: &chunk)
+        Instruction.constInt(1, into: &chunk)
+        chunk.write(.add)
+        Instruction.storeLocal(varSlot, into: &chunk)
+
+        // Loop back
+        chunk.write(.loop)
+        chunk.writeI16(Int16(loopStart - (chunk.count + 2)))
+
+        Instruction.patchJump(at: exitJump, in: &chunk)
+
+        for bp in breakTargets { Instruction.patchJump(at: bp, in: &chunk) }
+        for cp in continueTargets { chunk.patchI16(at: cp, value: Int16(loopStart - (cp + 2))) }
+
+        let removed = scopeTracker.popScope()
+        for _ in removed { chunk.write(.pop) }
+
+        breakTargets = oldBreakTargets
+        continueTargets = oldContinueTargets
+        loopDepth -= 1
+    }
+
+    private func compileForInArray(_ stmt: ForInStatementNode) {
         compileExpression(stmt.iterable)
 
-        // Get array length, iterate with index
-        // This is a simplified implementation
-        let nameIndex = chunk.constantPool.addString("count")
-        chunk.write(.dup)
-        Instruction.getProperty(nameIndex, into: &chunk)
-
-        // Store count
         scopeTracker.pushScope()
+
+        // Store the array
+        let arraySlot = scopeTracker.declare(name: "__array", isMutable: false)
+        Instruction.storeLocal(arraySlot, into: &chunk)
+
+        // Get count via property
+        Instruction.loadLocal(arraySlot, into: &chunk)
+        let countNameIdx = chunk.constantPool.addString("count")
+        Instruction.getProperty(countNameIdx, into: &chunk)
         let countSlot = scopeTracker.declare(name: "__count", isMutable: false)
         Instruction.storeLocal(countSlot, into: &chunk)
 
-        // Initialize index to 0
+        // Index = 0
         Instruction.constInt(0, into: &chunk)
         let indexSlot = scopeTracker.declare(name: "__index", isMutable: true)
         Instruction.storeLocal(indexSlot, into: &chunk)
 
         let loopStart = chunk.count
+
         // Check index < count
         Instruction.loadLocal(indexSlot, into: &chunk)
         Instruction.loadLocal(countSlot, into: &chunk)
         chunk.write(.lt)
         let exitJump = Instruction.jumpIfFalse(into: &chunk)
 
-        // Get element at index
-        chunk.write(.dup)
+        // Get element: array[index]
+        Instruction.loadLocal(arraySlot, into: &chunk)
         Instruction.loadLocal(indexSlot, into: &chunk)
         chunk.write(.getIndex)
-
-        // Bind loop variable
         let varSlot = scopeTracker.declare(name: stmt.variableName, isMutable: false)
         Instruction.storeLocal(varSlot, into: &chunk)
 
@@ -360,9 +430,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
         breakTargets = []
         continueTargets = []
 
-        for s in stmt.body.statements {
-            compileStatement(s)
-        }
+        for s in stmt.body.statements { compileStatement(s) }
 
         // Increment index
         Instruction.loadLocal(indexSlot, into: &chunk)
@@ -370,22 +438,17 @@ public final class BytecodeCompiler: @unchecked Sendable {
         chunk.write(.add)
         Instruction.storeLocal(indexSlot, into: &chunk)
 
-        // Loop back to condition check
+        // Loop back
         chunk.write(.loop)
-        let offset = loopStart - (chunk.count + 2)
-        chunk.writeI16(Int16(offset))
+        chunk.writeI16(Int16(loopStart - (chunk.count + 2)))
 
         Instruction.patchJump(at: exitJump, in: &chunk)
 
-        for bp in breakTargets {
-            Instruction.patchJump(at: bp, in: &chunk)
-        }
+        for bp in breakTargets { Instruction.patchJump(at: bp, in: &chunk) }
+        for cp in continueTargets { chunk.patchI16(at: cp, value: Int16(loopStart - (cp + 2))) }
 
         let removed = scopeTracker.popScope()
         for _ in removed { chunk.write(.pop) }
-
-        // Pop the iterable
-        chunk.write(.pop)
 
         breakTargets = oldBreakTargets
         continueTargets = oldContinueTargets
@@ -520,13 +583,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private func compileFunctionDeclaration(_ decl: FunctionDeclarationNode) {
         emitLocation(decl.location)
 
-        // Compile function body into a separate chunk
-        var funcChunk = Chunk()
-        funcChunk.constantPool = chunk.constantPool
+        // Jump over the function body (it's inlined in the shared bytecode)
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
 
-        let savedChunk = chunk
-        chunk = funcChunk
-
+        // Compile function body inline
         scopeTracker.pushScope()
         for param in decl.parameters {
             scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
@@ -544,11 +605,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let removed = scopeTracker.popScope()
         _ = removed
 
-        let funcBytecode = chunk.bytecode
-        let updatedPool = chunk.constantPool
-
-        chunk = savedChunk
-        chunk.constantPool = updatedPool
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
 
         let parameters = decl.parameters.map { param in
             ParameterInfo(
@@ -562,13 +620,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let funcRef = FunctionRef(
             name: decl.name,
             parameters: parameters,
-            localCount: scopeTracker.slotCount,
+            localCount: UInt16(decl.parameters.count + 16), // room for locals
             isAsync: decl.isAsync,
             isThrowing: decl.isThrowing,
-            bytecode: funcBytecode
+            bytecode: [] // body is inline in shared bytecode
         )
 
         let funcIndex = chunk.constantPool.addFunction(funcRef)
+
+        // Record debug info with bytecode range
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: decl.name,
+            parameterNames: decl.parameters.map(\.internalName),
+            sourceRange: (start: decl.location, end: decl.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
 
         // Store function as global
         let nameIndex = chunk.constantPool.addString(decl.name)
@@ -576,13 +642,6 @@ public final class BytecodeCompiler: @unchecked Sendable {
         chunk.writeU16(funcIndex)
         chunk.write(0) // No captures for top-level functions
         Instruction.storeGlobal(nameIndex, into: &chunk)
-
-        functionDebugInfo.append(FunctionDebugInfo(
-            name: decl.name,
-            parameterNames: decl.parameters.map(\.internalName),
-            sourceRange: (start: decl.location, end: decl.location),
-            bytecodeRange: (start: 0, end: funcBytecode.count)
-        ))
     }
 
     private func compileStructDeclaration(_ decl: StructDeclarationNode) {
@@ -771,15 +830,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     private func compileIdentifier(_ ident: IdentifierNode) {
+        // Check locals first (inner to outer scope)
         if let local = scopeTracker.resolve(ident.name) {
-            if local.depth == 0 {
-                // Top-level variables are stored as globals
-                let nameIndex = chunk.constantPool.addString(ident.name)
-                Instruction.loadGlobal(nameIndex, into: &chunk)
-            } else {
-                Instruction.loadLocal(local.slot, into: &chunk)
-            }
+            Instruction.loadLocal(local.slot, into: &chunk)
         } else {
+            // Global or unresolved — load from environment
             let nameIndex = chunk.constantPool.addString(ident.name)
             Instruction.loadGlobal(nameIndex, into: &chunk)
         }
@@ -922,14 +977,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 if !local.isMutable {
                     diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
                 }
-                chunk.write(.dup) // Keep value on stack for expression result
-                if local.depth == 0 {
-                    let nameIndex = chunk.constantPool.addString(ident.name)
-                    Instruction.storeGlobal(nameIndex, into: &chunk)
-                } else {
-                    Instruction.storeLocal(local.slot, into: &chunk)
-                }
+                chunk.write(.dup)
+                Instruction.storeLocal(local.slot, into: &chunk)
             } else {
+                // Global variable
                 chunk.write(.dup)
                 let nameIndex = chunk.constantPool.addString(ident.name)
                 Instruction.storeGlobal(nameIndex, into: &chunk)

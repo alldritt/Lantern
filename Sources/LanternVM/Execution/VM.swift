@@ -416,27 +416,22 @@ public final class VM: @unchecked Sendable {
             ip += 2 // advance past CALL opcode
 
         case .closure(let ref):
-            guard argCount >= ref.function.arity && argCount <= ref.function.totalParameterCount else {
-                throw InterpreterError.wrongArgumentCount(expected: ref.function.arity, got: argCount, at: loc())
-            }
             guard callStack.count < maxCallDepth else {
                 throw InterpreterError.stackOverflow(at: loc())
             }
-            // Save return address (past the CALL instruction)
-            let frame = CallFrame(function: ref.function, ip: ip + 2, basePointer: stack.count - argCount - 1, captures: ref.captures)
+            // Stack layout: [..., callee, arg0, arg1, ..., argN-1]
+            // basePointer = start of args (slot 0 = first arg)
+            let bp = stack.count - argCount
+            let frame = CallFrame(function: ref.function, ip: ip + 2, basePointer: bp, captures: ref.captures)
             callStack.append(frame)
-            let extra = Int(ref.function.localCount) - argCount
+            // Allocate extra local slots beyond parameters
+            let extra = max(0, Int(ref.function.localCount) - argCount)
             for _ in 0..<extra { try stack.push(.nil_) }
-            // Jump to function bytecode offset within the shared program
-            // The compiler stores the function's start offset in the bytecodeRange
-            // For now, functions compiled inline use offsets into shared bytecode
+            // Jump to function body in shared bytecode
             if let fnInfo = program.functionTable.first(where: { $0.name == ref.function.name }) {
                 ip = fnInfo.bytecodeRange.start
-            } else if !ref.function.bytecode.isEmpty {
-                // Per-function bytecode not yet supported in shared execution
-                ip += 2
             } else {
-                ip += 2
+                throw InterpreterError.undefinedFunction(ref.function.name, at: loc())
             }
 
         default:
@@ -446,7 +441,9 @@ public final class VM: @unchecked Sendable {
 
     private func returnFromFunction() throws {
         guard let frame = callStack.popLast() else { state = .halted; return }
-        stack.truncate(to: frame.basePointer); ip = frame.ip
+        // Truncate stack: remove locals, args, and the callee (1 below basePointer)
+        stack.truncate(to: max(0, frame.basePointer - 1))
+        ip = frame.ip
     }
 
     // MARK: - Collections
