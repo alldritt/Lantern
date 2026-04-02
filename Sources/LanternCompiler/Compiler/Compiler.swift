@@ -399,7 +399,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         // Get count via property
         Instruction.loadLocal(arraySlot, into: &chunk)
-        let countNameIdx = chunk.constantPool.addString("count")
+        let countNameIdx = chunk.constantPool.addPropertyName("count")
         Instruction.getProperty(countNameIdx, into: &chunk)
         let countSlot = scopeTracker.declare(name: "__count", isMutable: false)
         Instruction.storeLocal(countSlot, into: &chunk)

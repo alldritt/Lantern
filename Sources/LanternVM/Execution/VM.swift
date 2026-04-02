@@ -224,8 +224,7 @@ public final class VM: @unchecked Sendable {
         case .getProperty:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.propertyName(at: ni) else { throw decodeError() }
             let inst = stack.pop()
-            if case .instance(let ref) = inst, let v = ref.property(name) { try stack.push(v) }
-            else { throw InterpreterError.undefinedProperty(name, on: inst.typeName, at: loc()) }
+            try stack.push(getProperty(inst, name: name))
             ip += 3
         case .setProperty:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.propertyName(at: ni) else { throw decodeError() }
@@ -239,8 +238,10 @@ public final class VM: @unchecked Sendable {
             let val = stack.pop(), idx = stack.pop(); var col = stack.pop()
             try setIndex(&col, idx, val); try stack.push(col); ip += 1
         case .callMethod:
-            guard let _ = readU16(at: ip + 1), let _ = readU8(at: ip + 3) else { throw decodeError() }
-            ip += 4 // stub — full dispatch via bridge
+            guard let ni = readU16(at: ip + 1), let argc = readU8(at: ip + 3),
+                  let methodName = program.constantPool.methodName(at: ni) else { throw decodeError() }
+            try callMethod(methodName, argCount: Int(argc))
+            ip += 4
 
         // Host bridge
         case .callHost:
@@ -444,6 +445,99 @@ public final class VM: @unchecked Sendable {
         // Truncate stack: remove locals, args, and the callee (1 below basePointer)
         stack.truncate(to: max(0, frame.basePointer - 1))
         ip = frame.ip
+    }
+
+    // MARK: - Method Calls
+
+    private func callMethod(_ name: String, argCount: Int) throws {
+        // Collect args (they're above the receiver on the stack)
+        var args: [Value] = []
+        for _ in 0..<argCount { args.insert(stack.pop(), at: 0) }
+        let receiver = stack.pop()
+
+        let result: Value
+        switch receiver {
+        case .array(var arr):
+            switch name {
+            case "append":
+                guard let elem = args.first else { throw InterpreterError.wrongArgumentCount(expected: 1, got: 0, at: loc()) }
+                arr.append(elem)
+                // Mutating method — need to write back. For now push the modified array as result.
+                // The caller needs to handle the mutation. Push modified array.
+                result = .array(arr)
+            case "contains":
+                guard let elem = args.first else { throw InterpreterError.wrongArgumentCount(expected: 1, got: 0, at: loc()) }
+                result = .bool(arr.contains(elem))
+            case "reversed":
+                result = .array(arr.reversed())
+            case "removeLast":
+                _ = arr.popLast()
+                result = .array(arr)
+            default:
+                throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
+            }
+        case .string(let s):
+            switch name {
+            case "uppercased": result = .string(s.uppercased())
+            case "lowercased": result = .string(s.lowercased())
+            case "hasPrefix":
+                guard case .string(let prefix) = args.first else { result = .bool(false); break }
+                result = .bool(s.hasPrefix(prefix))
+            case "hasSuffix":
+                guard case .string(let suffix) = args.first else { result = .bool(false); break }
+                result = .bool(s.hasSuffix(suffix))
+            case "contains":
+                guard case .string(let sub) = args.first else { result = .bool(false); break }
+                result = .bool(s.contains(sub))
+            default:
+                throw InterpreterError.undefinedMethod(name, on: "String", at: loc())
+            }
+        case .dictionary(var d):
+            switch name {
+            case "removeValue":
+                if case .string(let key) = args.first { d.removeValue(forKey: key) }
+                result = .dictionary(d)
+            default:
+                throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
+            }
+        default:
+            throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
+        }
+        try stack.push(result)
+    }
+
+    // MARK: - Property Access
+
+    private func getProperty(_ value: Value, name: String) throws -> Value {
+        switch value {
+        case .array(let arr):
+            switch name {
+            case "count": return .int(arr.count)
+            case "isEmpty": return .bool(arr.isEmpty)
+            case "first": return arr.first ?? .nil_
+            case "last": return arr.last ?? .nil_
+            default: throw InterpreterError.undefinedProperty(name, on: "Array", at: loc())
+            }
+        case .string(let s):
+            switch name {
+            case "count": return .int(s.count)
+            case "isEmpty": return .bool(s.isEmpty)
+            default: throw InterpreterError.undefinedProperty(name, on: "String", at: loc())
+            }
+        case .dictionary(let d):
+            switch name {
+            case "count": return .int(d.count)
+            case "isEmpty": return .bool(d.isEmpty)
+            case "keys": return .array(d.keys.sorted().map { .string($0) })
+            case "values": return .array(Array(d.values))
+            default: throw InterpreterError.undefinedProperty(name, on: "Dictionary", at: loc())
+            }
+        case .instance(let ref):
+            if let v = ref.property(name) { return v }
+            throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
+        default:
+            throw InterpreterError.undefinedProperty(name, on: value.typeName, at: loc())
+        }
     }
 
     // MARK: - Collections
