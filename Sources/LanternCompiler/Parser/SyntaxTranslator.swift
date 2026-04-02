@@ -873,6 +873,21 @@ final class SyntaxTranslator: SyntaxVisitor {
 
         let bodyStatements = translateCodeBlockItemList(expr.statements)
         let body = BlockNode(statements: bodyStatements, location: loc)
+
+        // If no explicit params, detect $0, $1, etc. in the body
+        if params.isEmpty {
+            let bodyText = expr.statements.trimmedDescription
+            var maxShorthand = -1
+            for i in 0...9 {
+                if bodyText.contains("$\(i)") { maxShorthand = i }
+            }
+            if maxShorthand >= 0 {
+                for i in 0...maxShorthand {
+                    params.append("$\(i)")
+                }
+            }
+        }
+
         return ClosureExpressionNode(parameters: params, body: body, location: loc)
     }
 

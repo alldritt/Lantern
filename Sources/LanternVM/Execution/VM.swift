@@ -470,6 +470,66 @@ public final class VM: @unchecked Sendable {
         ip = frame.ip
     }
 
+    // MARK: - Value Invocation (for map/filter/reduce callbacks)
+
+    /// Invoke a closure or native function with the given arguments, returning the result.
+    /// This saves/restores VM state for re-entrant execution.
+    public func invokeValue(_ callable: Value, args: [Value]) throws -> Value {
+        switch callable {
+        case .nativeFunction(let native):
+            return try native.body(args)
+
+        case .closure(let ref):
+            // Save current execution state
+            let savedIP = ip
+            let savedCallStack = callStack
+            let savedStackTop = stack.count
+
+            // Push callee + args
+            try stack.push(callable)
+            for arg in args { try stack.push(arg) }
+
+            // Set up call frame
+            let bp = stack.count - args.count
+            let retIP = program.bytecode.count // will be past end → stops naturally
+            let frame = CallFrame(function: ref.function, ip: retIP, basePointer: bp, captures: ref.captures)
+            callStack.append(frame)
+
+            let extra = max(0, Int(ref.function.localCount) - args.count)
+            for _ in 0..<extra { try stack.push(.nil_) }
+
+            // Find function body
+            guard let fnInfo = program.functionTable.first(where: { $0.name == ref.function.name }) else {
+                throw InterpreterError.undefinedFunction(ref.function.name, at: loc())
+            }
+            ip = fnInfo.bytecodeRange.start
+
+            // Run until return (frame is popped)
+            let targetDepth = savedCallStack.count
+            while callStack.count > targetDepth {
+                guard ip < program.bytecode.count else { break }
+                guard let raw = readU8(at: ip), let opcode = Opcode(rawValue: raw) else { break }
+                try execute(opcode)
+                if case .halted = state { break }
+                if case .error = state { break }
+            }
+
+            // Grab the return value (return_ pushes it after truncating)
+            let result = stack.count > savedStackTop ? stack.pop() : Value.void
+
+            // Restore state
+            stack.truncate(to: savedStackTop)
+            callStack = savedCallStack
+            ip = savedIP
+            state = .running
+
+            return result
+
+        default:
+            throw InterpreterError.notCallable(callable.typeName, at: loc())
+        }
+    }
+
     // MARK: - Method Calls
 
     /// Returns true if dispatched to a function (IP already set), false if result pushed and IP needs advancing.
@@ -514,9 +574,39 @@ public final class VM: @unchecked Sendable {
                 }
                 result = .array(sorted)
             case "joined":
-                // joined(separator:)
                 let sep = (args.first?.stringValue) ?? ""
                 result = .string(arr.compactMap { $0.stringValue }.joined(separator: sep))
+            case "map":
+                guard let closureVal = args.first else { result = .array([]); break }
+                var mapped: [Value] = []
+                for elem in arr {
+                    let r = try invokeValue(closureVal, args: [elem])
+                    mapped.append(r)
+                }
+                result = .array(mapped)
+            case "filter":
+                guard let closureVal = args.first else { result = .array(arr); break }
+                var filtered: [Value] = []
+                for elem in arr {
+                    let r = try invokeValue(closureVal, args: [elem])
+                    if r.isTruthy { filtered.append(elem) }
+                }
+                result = .array(filtered)
+            case "forEach":
+                guard let closureVal = args.first else { result = .void; break }
+                for elem in arr { _ = try invokeValue(closureVal, args: [elem]) }
+                result = .void
+            case "reduce":
+                guard args.count >= 2 else { result = .nil_; break }
+                var accumulator = args[0]
+                let closureVal = args[1]
+                for elem in arr {
+                    accumulator = try invokeValue(closureVal, args: [accumulator, elem])
+                }
+                result = accumulator
+            case "enumerated":
+                // Returns array of (index, value) pairs as arrays
+                result = .array(arr.enumerated().map { .array([.int($0.offset), $0.element]) })
             default:
                 throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
             }
@@ -554,6 +644,47 @@ public final class VM: @unchecked Sendable {
             default:
                 throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
             }
+        case .range(let start, let end, let inclusive):
+            // Convert range to array and dispatch
+            let rangeEnd = inclusive ? end : end - 1
+            let arr = (start...rangeEnd).map { Value.int($0) }
+            // Re-dispatch as array method
+            try stack.push(.array(arr))
+            for arg in args { try stack.push(arg) }
+            // We need to manually call the array method
+            var arrayArgs: [Value] = []
+            for _ in 0..<args.count { arrayArgs.insert(stack.pop(), at: 0) }
+            let arrayReceiver = stack.pop()
+            // Re-enter method dispatch with array receiver
+            try stack.push(arrayReceiver)
+            for a in arrayArgs { try stack.push(a) }
+            var result2: [Value] = []
+            if case .array(let rangeArr) = arrayReceiver {
+                switch name {
+                case "map":
+                    guard let closureVal = args.first else { try stack.push(.array([])); return false }
+                    for elem in rangeArr { result2.append(try invokeValue(closureVal, args: [elem])) }
+                    // Clean up pushed values
+                    for _ in 0..<(args.count + 1) { _ = stack.pop() }
+                    try stack.push(.array(result2)); return false
+                case "filter":
+                    guard let closureVal = args.first else { try stack.push(.array([])); return false }
+                    for elem in rangeArr { if (try invokeValue(closureVal, args: [elem])).isTruthy { result2.append(elem) } }
+                    for _ in 0..<(args.count + 1) { _ = stack.pop() }
+                    try stack.push(.array(result2)); return false
+                case "reduce":
+                    guard args.count >= 2 else { break }
+                    var acc = args[0]; let fn = args[1]
+                    for elem in rangeArr { acc = try invokeValue(fn, args: [acc, elem]) }
+                    for _ in 0..<(args.count + 1) { _ = stack.pop() }
+                    try stack.push(acc); return false
+                default: break
+                }
+            }
+            // Clean up if we didn't handle it
+            for _ in 0..<(args.count + 1) { _ = stack.pop() }
+            throw InterpreterError.undefinedMethod(name, on: "Range", at: loc())
+
         default:
             // Try type-qualified method lookup (e.g., "Greeter.greet")
             let qualifiedName = "\(receiver.typeName).\(name)"
