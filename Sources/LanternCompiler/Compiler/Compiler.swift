@@ -925,11 +925,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     private func compileClosureExpression(_ closure: ClosureExpressionNode) {
-        var funcChunk = Chunk()
-        funcChunk.constantPool = chunk.constantPool
+        let closureName = "<closure_\(chunk.count)>"
 
-        let savedChunk = chunk
-        chunk = funcChunk
+        // Jump over the closure body
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
 
         scopeTracker.pushScope()
         for param in closure.parameters {
@@ -940,33 +940,47 @@ public final class BytecodeCompiler: @unchecked Sendable {
             compileStatement(stmt)
         }
 
-        if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {
-            chunk.write(.returnVoid)
+        // If last statement is an expression (implicit return), emit return
+        if chunk.bytecode.last != Opcode.return_.rawValue && chunk.bytecode.last != Opcode.returnVoid.rawValue {
+            // Check if last compiled statement was an expression (the value is on stack)
+            // For single-expression closures like { n * n }, the expression result is on stack
+            if closure.body.statements.count == 1 && closure.body.statements.first is ExpressionStatementNode {
+                // Remove the trailing pop (expression statement adds pop) and add return
+                if chunk.bytecode.last == Opcode.pop.rawValue {
+                    chunk.bytecode.removeLast()
+                }
+                chunk.write(.return_)
+            } else {
+                chunk.write(.returnVoid)
+            }
         }
 
         _ = scopeTracker.popScope()
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
 
-        let closureBytecode = chunk.bytecode
-        let updatedPool = chunk.constantPool
-
-        chunk = savedChunk
-        chunk.constantPool = updatedPool
-
-        let params = closure.parameters.map {
-            ParameterInfo(name: $0)
-        }
+        let params = closure.parameters.map { ParameterInfo(name: $0) }
 
         let funcRef = FunctionRef(
-            name: "<closure>",
+            name: closureName,
             parameters: params,
-            localCount: UInt16(closure.parameters.count),
-            bytecode: closureBytecode
+            localCount: UInt16(closure.parameters.count + 16),
+            bytecode: []
         )
 
         let funcIndex = chunk.constantPool.addFunction(funcRef)
+
+        // Record in function table for VM dispatch
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: closureName,
+            parameterNames: closure.parameters,
+            sourceRange: (start: closure.location, end: closure.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
         chunk.write(.closure)
         chunk.writeU16(funcIndex)
-        chunk.write(0) // captures count
+        chunk.write(0) // captures count (simplified — capture support pending)
     }
 
     private func compileAssignment(_ assign: AssignmentNode) {
