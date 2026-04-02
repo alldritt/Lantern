@@ -665,8 +665,13 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     isMutable: prop.isMutable,
                     isStatic: prop.isStatic
                 ))
-            } else if let funcDecl = member as? FunctionDeclarationNode {
-                compileFunctionDeclaration(funcDecl)
+                }
+        }
+
+        // Compile methods as "TypeName.methodName" globals
+        for member in decl.members {
+            if let funcDecl = member as? FunctionDeclarationNode {
+                compileTypeMethod(funcDecl, typeName: decl.name)
             }
         }
 
@@ -679,60 +684,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             sourceRange: (start: decl.location, end: decl.location)
         ))
 
-        // Generate memberwise initializer as a native function
-        // The VM will register this when executing
-        let propNames = properties.map(\.name)
-        let structName = decl.name
-
-        // Emit CONSTRUCT opcode approach: store a native init in the global
-        // We emit a closure that creates an InstanceRef
-        let jumpOver = Instruction.jump(into: &chunk)
-        let bodyStart = chunk.count
-
-        // The init body: create instance from args on stack
-        // Args are at local slots 0, 1, ...
-        let savedSlots = scopeTracker.saveSlotState()
-        scopeTracker.restoreSlotState(0)
-        scopeTracker.pushScope()
-        for prop in propNames {
-            scopeTracker.declare(name: prop, isMutable: false)
-        }
-
-        // Build instance: push all property values, then construct
-        for (i, _) in propNames.enumerated() {
-            Instruction.loadLocal(UInt16(i), into: &chunk)
-        }
-        Instruction.construct(typeIndex, argCount: UInt8(propNames.count), into: &chunk)
-        chunk.write(.return_)
-
-        _ = scopeTracker.popScope()
-        scopeTracker.restoreSlotState(savedSlots)
-
-        let bodyEnd = chunk.count
-        Instruction.patchJump(at: jumpOver, in: &chunk)
-
-        let initParams = propNames.map { ParameterInfo(label: $0, name: $0) }
-        let initRef = FunctionRef(
-            name: structName,
-            parameters: initParams,
-            localCount: UInt16(propNames.count + 4),
-            bytecode: []
-        )
-        let funcIndex = chunk.constantPool.addFunction(initRef)
-
-        functionDebugInfo.append(FunctionDebugInfo(
-            name: structName,
-            parameterNames: propNames,
-            sourceRange: (start: decl.location, end: decl.location),
-            bytecodeRange: (start: bodyStart, end: bodyEnd)
-        ))
-
-        // Store as global
-        let nameIndex = chunk.constantPool.addString(structName)
-        chunk.write(.closure)
-        chunk.writeU16(funcIndex)
-        chunk.write(0)
-        Instruction.storeGlobal(nameIndex, into: &chunk)
+        // Generate memberwise init
+        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), kind: .struct)
     }
 
     private func compileClassDeclaration(_ decl: ClassDeclarationNode) {
@@ -747,8 +700,19 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
-            } else if let funcDecl = member as? FunctionDeclarationNode {
-                compileFunctionDeclaration(funcDecl)
+            } else if let prop = member as? PropertyNode {
+                properties.append(PropertyInfo(
+                    name: prop.name,
+                    typeAnnotation: prop.typeAnnotation,
+                    isMutable: prop.isMutable
+                ))
+            }
+        }
+
+        // Compile methods as global functions named "TypeName.methodName"
+        for member in decl.members {
+            if let funcDecl = member as? FunctionDeclarationNode {
+                compileTypeMethod(funcDecl, typeName: decl.name)
             }
         }
 
@@ -760,7 +724,102 @@ public final class BytecodeCompiler: @unchecked Sendable {
             conformances: decl.conformances,
             sourceRange: (start: decl.location, end: decl.location)
         ))
-        _ = typeIndex
+
+        // Generate memberwise init
+        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), kind: .class)
+    }
+
+    /// Compile a method as a global function "TypeName.methodName" with implicit self parameter
+    private func compileTypeMethod(_ decl: FunctionDeclarationNode, typeName: String) {
+        let qualifiedName = "\(typeName).\(decl.name)"
+
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
+
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
+        scopeTracker.pushScope()
+
+        // Slot 0 = self (implicit)
+        scopeTracker.declare(name: "self", isMutable: false)
+        for param in decl.parameters {
+            scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
+        }
+
+        for stmt in decl.body.statements {
+            compileStatement(stmt)
+        }
+
+        if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {
+            chunk.write(.returnVoid)
+        }
+
+        _ = scopeTracker.popScope()
+        scopeTracker.restoreSlotState(savedSlots)
+
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        var params = [ParameterInfo(label: nil, name: "self")]
+        params += decl.parameters.map { ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation) }
+
+        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [])
+        let funcIndex = chunk.constantPool.addFunction(funcRef)
+
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: qualifiedName,
+            parameterNames: params.map(\.name),
+            sourceRange: (start: decl.location, end: decl.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
+        let nameIndex = chunk.constantPool.addString(qualifiedName)
+        chunk.write(.closure)
+        chunk.writeU16(funcIndex)
+        chunk.write(0)
+        Instruction.storeGlobal(nameIndex, into: &chunk)
+    }
+
+    /// Generate a memberwise initializer stored as a global
+    private func emitMemberwiseInit(name: String, typeIndex: UInt16, propNames: [String], kind: TypeKind) {
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
+
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
+        scopeTracker.pushScope()
+        for prop in propNames {
+            scopeTracker.declare(name: prop, isMutable: false)
+        }
+
+        for (i, _) in propNames.enumerated() {
+            Instruction.loadLocal(UInt16(i), into: &chunk)
+        }
+        Instruction.construct(typeIndex, argCount: UInt8(propNames.count), into: &chunk)
+        chunk.write(.return_)
+
+        _ = scopeTracker.popScope()
+        scopeTracker.restoreSlotState(savedSlots)
+
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        let initParams = propNames.map { ParameterInfo(label: $0, name: $0) }
+        let initRef = FunctionRef(name: name, parameters: initParams, localCount: UInt16(propNames.count + 4), bytecode: [])
+        let funcIndex = chunk.constantPool.addFunction(initRef)
+
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: name,
+            parameterNames: propNames,
+            sourceRange: (start: .unknown, end: .unknown),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
+        let nameIndex = chunk.constantPool.addString(name)
+        chunk.write(.closure)
+        chunk.writeU16(funcIndex)
+        chunk.write(0)
+        Instruction.storeGlobal(nameIndex, into: &chunk)
     }
 
     private func compileEnumDeclaration(_ decl: EnumDeclarationNode) {

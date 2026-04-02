@@ -265,7 +265,8 @@ public final class VM: @unchecked Sendable {
                     props.insert((name: "prop\(i)", value: stack.pop()), at: 0)
                 }
             }
-            try stack.push(.instance(InstanceRef(typeName: typeName, kind: .struct, properties: props)))
+            let kind = program.typeTable.first(where: { $0.name == typeName })?.kind ?? .struct
+            try stack.push(.instance(InstanceRef(typeName: typeName, kind: kind, properties: props)))
             ip += 4
 
         // Optionals
@@ -534,6 +535,16 @@ public final class VM: @unchecked Sendable {
                 throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
             }
         default:
+            // Try type-qualified method lookup (e.g., "Greeter.greet")
+            let qualifiedName = "\(receiver.typeName).\(name)"
+            if let method = environment.getGlobal(qualifiedName) {
+                // Push method, then receiver (self) and args, then call
+                try stack.push(method)
+                try stack.push(receiver)
+                for arg in args { try stack.push(arg) }
+                try callFunction(argCount: args.count + 1) // +1 for self
+                return
+            }
             throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
         }
         try stack.push(result)
