@@ -20,22 +20,37 @@ public struct ValueStack: Sendable {
 
     @discardableResult
     public mutating func pop() -> Value {
-        precondition(top > 0, "Stack underflow")
+        guard top > 0 else { return .nil_ } // graceful underflow
         top -= 1; return storage[top]
     }
 
     public func peek(_ distance: Int = 0) -> Value {
-        precondition(top - 1 - distance >= 0, "Stack peek underflow")
-        return storage[top - 1 - distance]
+        let idx = top - 1 - distance
+        guard idx >= 0 && idx < storage.count else { return .nil_ }
+        return storage[idx]
     }
 
     public subscript(index: Int) -> Value {
-        get { precondition(index >= 0 && index < top); return storage[index] }
-        set { precondition(index >= 0 && index < top); storage[index] = newValue }
+        get {
+            guard index >= 0 && index < top else { return .nil_ }
+            return storage[index]
+        }
+        set {
+            // Extend storage if needed
+            while index >= storage.count {
+                storage.append(contentsOf: Array(repeating: Value.nil_, count: max(storage.count, 16)))
+            }
+            if index >= top { top = index + 1 }
+            storage[index] = newValue
+        }
     }
 
     public var isEmpty: Bool { top == 0 }
     public var count: Int { top }
     public mutating func reset() { top = 0 }
-    public mutating func truncate(to height: Int) { precondition(height >= 0 && height <= top); top = height }
+    public mutating func truncate(to height: Int) {
+        if height < 0 { top = 0 }
+        else if height <= top { top = height }
+        // if height > top, no-op (don't grow)
+    }
 }
