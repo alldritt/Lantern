@@ -678,7 +678,61 @@ public final class BytecodeCompiler: @unchecked Sendable {
             conformances: decl.conformances,
             sourceRange: (start: decl.location, end: decl.location)
         ))
-        _ = typeIndex
+
+        // Generate memberwise initializer as a native function
+        // The VM will register this when executing
+        let propNames = properties.map(\.name)
+        let structName = decl.name
+
+        // Emit CONSTRUCT opcode approach: store a native init in the global
+        // We emit a closure that creates an InstanceRef
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
+
+        // The init body: create instance from args on stack
+        // Args are at local slots 0, 1, ...
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
+        scopeTracker.pushScope()
+        for prop in propNames {
+            scopeTracker.declare(name: prop, isMutable: false)
+        }
+
+        // Build instance: push all property values, then construct
+        for (i, _) in propNames.enumerated() {
+            Instruction.loadLocal(UInt16(i), into: &chunk)
+        }
+        Instruction.construct(typeIndex, argCount: UInt8(propNames.count), into: &chunk)
+        chunk.write(.return_)
+
+        _ = scopeTracker.popScope()
+        scopeTracker.restoreSlotState(savedSlots)
+
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        let initParams = propNames.map { ParameterInfo(label: $0, name: $0) }
+        let initRef = FunctionRef(
+            name: structName,
+            parameters: initParams,
+            localCount: UInt16(propNames.count + 4),
+            bytecode: []
+        )
+        let funcIndex = chunk.constantPool.addFunction(initRef)
+
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: structName,
+            parameterNames: propNames,
+            sourceRange: (start: decl.location, end: decl.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
+        // Store as global
+        let nameIndex = chunk.constantPool.addString(structName)
+        chunk.write(.closure)
+        chunk.writeU16(funcIndex)
+        chunk.write(0)
+        Instruction.storeGlobal(nameIndex, into: &chunk)
     }
 
     private func compileClassDeclaration(_ decl: ClassDeclarationNode) {

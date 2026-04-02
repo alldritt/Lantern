@@ -248,8 +248,25 @@ public final class VM: @unchecked Sendable {
             guard let _ = readU16(at: ip + 1), let _ = readU8(at: ip + 3) else { throw decodeError() }
             ip += 4 // dispatch via bridge registry
         case .construct:
-            guard let _ = readU16(at: ip + 1), let _ = readU8(at: ip + 3) else { throw decodeError() }
-            ip += 4 // dispatch via bridge registry
+            guard let ti = readU16(at: ip + 1), let argc = readU8(at: ip + 3),
+                  let typeName = program.constantPool.typeName(at: ti) else { throw decodeError() }
+            // Collect property values from stack
+            var props: [(name: String, value: Value)] = []
+            // Look up type info to get property names
+            if let typeInfo = program.typeTable.first(where: { $0.name == typeName }) {
+                var values: [Value] = []
+                for _ in 0..<argc { values.insert(stack.pop(), at: 0) }
+                for (i, prop) in typeInfo.properties.enumerated() where i < values.count {
+                    props.append((name: prop.name, value: values[i]))
+                }
+            } else {
+                // Fallback: unnamed properties
+                for i in (0..<Int(argc)).reversed() {
+                    props.insert((name: "prop\(i)", value: stack.pop()), at: 0)
+                }
+            }
+            try stack.push(.instance(InstanceRef(typeName: typeName, kind: .struct, properties: props)))
+            ip += 4
 
         // Optionals
         case .wrapOptional: try stack.push(.optional(stack.pop())); ip += 1
