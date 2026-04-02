@@ -213,7 +213,7 @@ public final class VM: @unchecked Sendable {
         case .return_:
             let rv = stack.pop(); try returnFromFunction(); try stack.push(rv)
         case .returnVoid:
-            try returnFromFunction()
+            try returnFromFunction(); try stack.push(.void)
         case .closure:
             guard let fi = readU16(at: ip + 1), let cc = readU8(at: ip + 3),
                   let fn = program.constantPool.function(at: fi) else { throw decodeError() }

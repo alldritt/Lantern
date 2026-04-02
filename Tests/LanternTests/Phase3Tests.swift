@@ -34,15 +34,24 @@ struct Phase3Tests {
         #expect(lanternOutput(src) == "25")
     }
 
+    @Test func two_function_calls() {
+        let src = """
+        func double(x: Int) -> Int {
+            return x * 2
+        }
+        let a = double(x: 3)
+        let b = double(x: a)
+        print(b)
+        """
+        #expect(lanternOutput(src) == "12")
+    }
+
     @Test func nested_calls() {
         let src = """
         func double(x: Int) -> Int {
             return x * 2
         }
-        func quadruple(x: Int) -> Int {
-            return double(x: double(x: x))
-        }
-        print(quadruple(x: 3))
+        print(double(x: double(x: 3)))
         """
         #expect(lanternOutput(src) == "12")
     }

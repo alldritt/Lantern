@@ -927,12 +927,40 @@ final class SyntaxTranslator: SyntaxVisitor {
                 return BinaryExpressionNode(op: op, left: left, right: right, location: loc)
             }
         }
+        // For 5-element: handle "target = expr op expr" (assignment with binary RHS)
+        if elements.count == 5 {
+            let opText1 = elements[1].trimmedDescription
+            if opText1 == "=" {
+                // target = a op b
+                guard let target = translateExpr(elements[0]) else { return nil }
+                let opText2 = elements[3].trimmedDescription
+                guard let a = translateExpr(elements[2]),
+                      let b = translateExpr(elements[4]),
+                      let op = BinaryOperator(rawValue: opText2) else { return nil }
+                let rhs = BinaryExpressionNode(op: op, left: a, right: b, location: self.location(of: expr))
+                return AssignmentNode(target: target, value: rhs, location: self.location(of: expr))
+            }
+        }
         // For longer sequences, fold left-to-right (simplified — doesn't handle precedence)
         if elements.count >= 5 && elements.count % 2 == 1 {
             guard var result = translateExpr(elements[0]) else { return nil }
             var i = 1
             while i + 1 < elements.count {
                 let opText = elements[i].trimmedDescription
+                if opText == "=" {
+                    // Assignment: everything after = is the value
+                    // Fold remaining elements
+                    guard var rhs = translateExpr(elements[i + 1]) else { break }
+                    var j = i + 2
+                    while j + 1 < elements.count {
+                        let rhsOp = elements[j].trimmedDescription
+                        guard let rhsRight = translateExpr(elements[j + 1]),
+                              let op = BinaryOperator(rawValue: rhsOp) else { break }
+                        rhs = BinaryExpressionNode(op: op, left: rhs, right: rhsRight, location: self.location(of: expr))
+                        j += 2
+                    }
+                    return AssignmentNode(target: result, value: rhs, location: self.location(of: expr))
+                }
                 guard let right = translateExpr(elements[i + 1]),
                       let op = BinaryOperator(rawValue: opText) else { break }
                 result = BinaryExpressionNode(op: op, left: result, right: right, location: self.location(of: expr))
