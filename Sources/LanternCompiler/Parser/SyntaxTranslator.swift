@@ -431,21 +431,27 @@ final class SyntaxTranslator: SyntaxVisitor {
 
         var condition: ExpressionNode?
         var optionalBinding: OptionalBinding?
+        var additionalBindings: [OptionalBinding] = []
 
-        if let first = expr.conditions.first {
-            switch first.condition {
+        for (i, condElem) in expr.conditions.enumerated() {
+            switch condElem.condition {
             case .expression(let condExpr):
-                condition = translateExpr(condExpr)
+                let translated = translateExpr(condExpr)
+                if i == 0 { condition = translated }
+                else if let existing = condition, let trans = translated {
+                    // AND multiple conditions
+                    condition = BinaryExpressionNode(op: .and, left: existing, right: trans, location: loc)
+                }
             case .optionalBinding(let binding):
                 let name = binding.pattern.trimmedDescription
                 let isMutable = binding.bindingSpecifier.tokenKind == .keyword(.var)
-                if let initializer = binding.initializer {
-                    if let value = translateExpr(initializer.value) {
-                        optionalBinding = OptionalBinding(name: name, isMutable: isMutable, value: value)
-                    }
+                if let initializer = binding.initializer, let value = translateExpr(initializer.value) {
+                    let ob = OptionalBinding(name: name, isMutable: isMutable, value: value)
+                    if i == 0 { optionalBinding = ob }
+                    else { additionalBindings.append(ob) }
                 }
             default:
-                emitDiagnostic("Unsupported condition kind", at: first)
+                emitDiagnostic("Unsupported condition kind", at: condElem)
             }
         }
 
@@ -461,6 +467,29 @@ final class SyntaxTranslator: SyntaxVisitor {
                 let stmts = translateCodeBlockItemList(codeBlock.statements)
                 elseBlock = BlockNode(statements: stmts, location: self.location(of: codeBlock))
             }
+        }
+
+        // For multiple optional bindings, nest: outer handles first, inner handles rest
+        if !additionalBindings.isEmpty {
+            // Build nested if-let for additional bindings
+            var innerBody = thenBlock
+            for binding in additionalBindings.reversed() {
+                let innerIf = IfStatementNode(
+                    condition: nil,
+                    optionalBinding: binding,
+                    thenBlock: innerBody,
+                    elseBlock: elseBlock,
+                    location: loc
+                )
+                innerBody = BlockNode(statements: [innerIf], location: loc)
+            }
+            return IfStatementNode(
+                condition: condition,
+                optionalBinding: optionalBinding,
+                thenBlock: innerBody,
+                elseBlock: elseBlock,
+                location: loc
+            )
         }
 
         return IfStatementNode(
