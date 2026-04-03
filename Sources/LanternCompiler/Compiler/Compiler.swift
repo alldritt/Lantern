@@ -789,16 +789,18 @@ public final class BytecodeCompiler: @unchecked Sendable {
             sourceRange: (start: decl.location, end: decl.location)
         ))
 
-        // Generate memberwise init — collect default values from member declarations
-        var defaults: [ExpressionNode?] = []
-        for member in decl.members {
-            if let prop = member as? VariableDeclarationNode {
-                defaults.append(prop.initializer)
-            } else if let prop = member as? PropertyNode {
-                defaults.append(prop.initializer)
+        // Check for custom init
+        let structInits = decl.members.compactMap { $0 as? InitializerNode }
+        if let customInit = structInits.first {
+            compileCustomInit(customInit, typeName: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), kind: .struct)
+        } else {
+            var defaults: [ExpressionNode?] = []
+            for member in decl.members {
+                if let prop = member as? VariableDeclarationNode { defaults.append(prop.initializer) }
+                else if let prop = member as? PropertyNode { defaults.append(prop.initializer) }
             }
+            emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: defaults, kind: .struct)
         }
-        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: defaults, kind: .struct)
     }
 
     private func compileClassDeclaration(_ decl: ClassDeclarationNode) {
@@ -822,7 +824,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
         }
 
-        // Compile methods as global functions named "TypeName.methodName"
+        // Compile methods
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
                 compileTypeMethod(funcDecl, typeName: decl.name)
@@ -838,16 +840,18 @@ public final class BytecodeCompiler: @unchecked Sendable {
             sourceRange: (start: decl.location, end: decl.location)
         ))
 
-        // Generate memberwise init — collect default values
-        var classDefaults: [ExpressionNode?] = []
-        for member in decl.members {
-            if let prop = member as? VariableDeclarationNode {
-                classDefaults.append(prop.initializer)
-            } else if let prop = member as? PropertyNode {
-                classDefaults.append(prop.initializer)
+        // Check for custom init
+        let customInits = decl.members.compactMap { $0 as? InitializerNode }
+        if let customInit = customInits.first {
+            compileCustomInit(customInit, typeName: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), kind: .class)
+        } else {
+            var classDefaults: [ExpressionNode?] = []
+            for member in decl.members {
+                if let prop = member as? VariableDeclarationNode { classDefaults.append(prop.initializer) }
+                else if let prop = member as? PropertyNode { classDefaults.append(prop.initializer) }
             }
+            emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: classDefaults, kind: .class)
         }
-        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: classDefaults, kind: .class)
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter
@@ -908,6 +912,77 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     /// Generate a memberwise initializer stored as a global
+    /// Compile a custom init declaration as the type's constructor.
+    /// init(params) { self.prop = param; ... } becomes a function that creates
+    /// an empty instance, runs the body (with self at slot 0), and returns self.
+    private func compileCustomInit(_ initNode: InitializerNode, typeName: String, typeIndex: UInt16, propNames: [String], kind: TypeKind) {
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
+
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
+        let savedMethod = compilingMethodOfType
+        compilingMethodOfType = typeName
+        scopeTracker.pushScope()
+
+        // Slots 0..N-1 are the init parameters (from caller)
+        for param in initNode.parameters {
+            scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
+        }
+
+        // Create empty instance and store in 'self' (next slot after params)
+        for _ in propNames { chunk.write(.constNil) }
+        Instruction.construct(typeIndex, argCount: UInt8(propNames.count), into: &chunk)
+        let selfSlot = scopeTracker.declare(name: "self", isMutable: true)
+        Instruction.storeLocal(selfSlot, into: &chunk)
+
+        // Compile init body (assignments like self.name = name)
+        for stmt in initNode.body.statements {
+            compileStatement(stmt)
+        }
+
+        // Return self
+        Instruction.loadLocal(selfSlot, into: &chunk)
+        chunk.write(.return_)
+
+        _ = scopeTracker.popScope()
+        compilingMethodOfType = savedMethod
+        scopeTracker.restoreSlotState(savedSlots)
+
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        // The init function takes the same params as the init declaration
+        // But slot 0 is self (not a parameter from the caller)
+        // The caller pushes args for params only, and self is created internally
+        // So the function's parameter list matches initNode.parameters
+        var params = initNode.parameters.map {
+            ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation)
+        }
+
+        // localCount = 1 (self) + params.count + extra
+        let funcRef = FunctionRef(
+            name: typeName,
+            parameters: params,
+            localCount: UInt16(1 + params.count + 16),
+            bytecode: []
+        )
+        let funcIndex = chunk.constantPool.addFunction(funcRef)
+
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: typeName,
+            parameterNames: params.map(\.name),
+            sourceRange: (start: initNode.location, end: initNode.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
+        let nameIndex = chunk.constantPool.addString(typeName)
+        chunk.write(.closure)
+        chunk.writeU16(funcIndex)
+        chunk.write(0)
+        Instruction.storeGlobal(nameIndex, into: &chunk)
+    }
+
     private func emitMemberwiseInit(name: String, typeIndex: UInt16, propNames: [String], defaults: [ExpressionNode?] = [], kind: TypeKind) {
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
@@ -1039,7 +1114,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 Instruction.getProperty(nameIndex, into: &chunk)
             }
         } else if expr is SelfNode {
-            Instruction.loadLocal(0, into: &chunk) // self is always slot 0
+            // self is at slot 0 in methods, or at the declared slot in custom inits
+            if let resolved = scopeTracker.resolve("self") {
+                Instruction.loadLocal(resolved.slot, into: &chunk)
+            } else {
+                Instruction.loadLocal(0, into: &chunk)
+            }
         } else if let typeRef = expr as? TypeReferenceNode {
             let nameIndex = chunk.constantPool.addString(typeRef.typeName)
             Instruction.loadGlobal(nameIndex, into: &chunk)
