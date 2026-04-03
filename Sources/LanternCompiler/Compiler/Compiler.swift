@@ -621,10 +621,33 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         for clause in stmt.catchClauses {
             if let pattern = clause.pattern {
-                // Specific catch pattern — try to match against the error
+                // Specific catch pattern — compare by caseName for enum errors
                 chunk.write(.dup) // dup error for comparison
-                // Try to compile the pattern as an expression (e.g., enum case reference)
-                if let patternExpr = parsePatternAsExpression(pattern) {
+
+                // Extract caseName from pattern (e.g., "LookupError.notFound(let key)" → "notFound")
+                var patternCaseName: String?
+                var patternBindings: [String] = []
+                let patternParts = pattern.split(separator: ".")
+                if patternParts.count == 2 {
+                    var rawCase = String(patternParts[1])
+                    if let paren = rawCase.firstIndex(of: "(") {
+                        let bindStr = String(rawCase[rawCase.index(after: paren)..<rawCase.index(before: rawCase.endIndex)])
+                        patternBindings = bindStr.split(separator: ",").map {
+                            $0.trimmingCharacters(in: .whitespaces)
+                             .replacingOccurrences(of: "let ", with: "")
+                             .replacingOccurrences(of: "var ", with: "")
+                        }
+                        rawCase = String(rawCase[rawCase.startIndex..<paren])
+                    }
+                    patternCaseName = rawCase
+                }
+
+                if let caseName = patternCaseName {
+                    // Compare by caseName
+                    let caseNameIdx = chunk.constantPool.addPropertyName("caseName")
+                    Instruction.getProperty(caseNameIdx, into: &chunk)
+                    Instruction.constString(caseName, into: &chunk)
+                } else if let patternExpr = parsePatternAsExpression(pattern) {
                     compileExpression(patternExpr)
                 } else {
                     Instruction.constString(pattern, into: &chunk)
@@ -632,11 +655,28 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 chunk.write(.eq)
                 let skipCatch = Instruction.jumpIfFalse(into: &chunk)
 
-                // Match: pop error, execute catch body, jump to end
+                // Match: extract bindings, then execute catch body
                 scopeTracker.pushScope()
                 let slot = scopeTracker.declare(name: "error", isMutable: false)
                 chunk.write(.dup)
                 Instruction.storeLocal(slot, into: &chunk)
+
+                // Extract associated value bindings
+                if !patternBindings.isEmpty {
+                    let assocIdx = chunk.constantPool.addPropertyName("associatedValues")
+                    Instruction.loadLocal(slot, into: &chunk)
+                    Instruction.getProperty(assocIdx, into: &chunk)
+                    let arrSlot = scopeTracker.declare(name: "__catch_assoc", isMutable: false)
+                    Instruction.storeLocal(arrSlot, into: &chunk)
+                    for (i, binding) in patternBindings.enumerated() {
+                        Instruction.loadLocal(arrSlot, into: &chunk)
+                        Instruction.constInt(i, into: &chunk)
+                        chunk.write(.getIndex)
+                        let bindSlot = scopeTracker.declare(name: binding, isMutable: false)
+                        Instruction.storeLocal(bindSlot, into: &chunk)
+                    }
+                }
+
                 chunk.write(.pop) // pop the error from main stack
                 compileBlock(clause.body)
                 _ = scopeTracker.popScope()
@@ -1897,8 +1937,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let parts = pattern.split(separator: ".")
         if parts.count == 2 {
             let typeName = String(parts[0])
-            let caseName = String(parts[1])
-            // Check if this is a known type
+            var caseName = String(parts[1])
+            // Strip associated value bindings from case name: "notFound(let key)" → "notFound"
+            if let parenIdx = caseName.firstIndex(of: "(") {
+                caseName = String(caseName[caseName.startIndex..<parenIdx])
+            }
             if symbolTable.lookup(typeName)?.isType == true {
                 return MemberAccessNode(
                     object: IdentifierNode(name: typeName, location: .unknown),
