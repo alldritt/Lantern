@@ -237,8 +237,20 @@ public final class Interpreter {
                 } else if let annotation = prop.typeAnnotation, annotation.hasPrefix("\"") {
                     rawValue = .string(String(annotation.dropFirst().dropLast()))
                 }
-                let caseRef = EnumCaseRef(typeName: typeInfo.name, caseName: prop.name, rawValue: rawValue)
-                vm.environment.setGlobal(qualifiedName, value: .enumCase(caseRef))
+                // Check if this case has associated values (indicated by isComputed flag)
+                if prop.isComputed {
+                    // Register as a constructor function
+                    let tName = typeInfo.name
+                    let cName = prop.name
+                    let rVal = rawValue
+                    let constructorFn = NativeFunctionRef(name: qualifiedName, arity: -1) { args in
+                        return .enumCase(EnumCaseRef(typeName: tName, caseName: cName, associatedValues: args, rawValue: rVal))
+                    }
+                    vm.environment.setGlobal(qualifiedName, value: .nativeFunction(constructorFn))
+                } else {
+                    let caseRef = EnumCaseRef(typeName: typeInfo.name, caseName: prop.name, rawValue: rawValue)
+                    vm.environment.setGlobal(qualifiedName, value: .enumCase(caseRef))
+                }
             }
         }
     }

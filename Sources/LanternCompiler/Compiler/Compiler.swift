@@ -1211,7 +1211,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 rawAnnotation = "\(nextIntRaw)"
                 nextIntRaw += 1
             }
-            return PropertyInfo(name: enumCase.name, typeAnnotation: rawAnnotation, isMutable: false)
+            let hasAssocValues = enumCase.associatedValues != nil && !(enumCase.associatedValues?.isEmpty ?? true)
+            return PropertyInfo(name: enumCase.name, typeAnnotation: rawAnnotation, isMutable: false, isComputed: hasAssocValues)
         }
         typeDebugInfo.append(TypeDebugInfo(
             name: decl.name,
@@ -1450,12 +1451,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private func compileFunctionCall(_ call: FunctionCallNode) {
         // Check if it's a method call
         if let memberAccess = call.callee as? MemberAccessNode {
-            compileExpression(memberAccess.object)
-            for arg in call.arguments {
-                compileExpression(arg.value)
+            // Check if the object is a type name — if so, call as qualified function
+            if let ident = memberAccess.object as? IdentifierNode,
+               symbolTable.lookup(ident.name)?.isType == true {
+                // Type.method() or Type.enumCase() — compile as loadGlobal("Type.method") + call
+                let qualifiedName = "\(ident.name).\(memberAccess.member)"
+                let nameIndex = chunk.constantPool.addString(qualifiedName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+                for arg in call.arguments { compileExpression(arg.value) }
+                Instruction.call(argCount: UInt8(call.arguments.count), into: &chunk)
+            } else {
+                compileExpression(memberAccess.object)
+                for arg in call.arguments { compileExpression(arg.value) }
+                let nameIndex = chunk.constantPool.addMethodName(memberAccess.member)
+                Instruction.callMethod(nameIndex, argCount: UInt8(call.arguments.count), into: &chunk)
             }
-            let nameIndex = chunk.constantPool.addMethodName(memberAccess.member)
-            Instruction.callMethod(nameIndex, argCount: UInt8(call.arguments.count), into: &chunk)
         } else {
             compileExpression(call.callee)
             for arg in call.arguments {
