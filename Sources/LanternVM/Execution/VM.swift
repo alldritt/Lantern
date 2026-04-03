@@ -736,7 +736,15 @@ public final class VM: @unchecked Sendable {
                 guard let closureVal = args.first else { result = .array([]); break }
                 var mapped: [Value] = []
                 for elem in arr {
-                    let r = try invokeValue(closureVal, args: [elem])
+                    // Destructure array elements for multi-param closures (e.g., zip results)
+                    let callArgs: [Value]
+                    if case .closure(let ref) = closureVal, ref.function.parameters.count > 1,
+                       case .array(let pair) = elem {
+                        callArgs = pair
+                    } else {
+                        callArgs = [elem]
+                    }
+                    let r = try invokeValue(closureVal, args: callArgs)
                     mapped.append(r)
                 }
                 result = .array(mapped)
@@ -1113,6 +1121,9 @@ public final class VM: @unchecked Sendable {
             guard i >= 0 && i < arr.count else { throw InterpreterError.indexOutOfBounds(i, count: arr.count, at: loc()) }
             return arr[i]
         case (.dictionary(let d), .string(let k)): return .optional(d[k])
+        case (.dictionary(let d), _):
+            // Non-string key: convert to string representation
+            let k = index.description; return .optional(d[k])
         default: throw InterpreterError.typeMismatch("Cannot subscript \(collection.typeName) with \(index.typeName)", at: loc())
         }
     }
@@ -1123,6 +1134,8 @@ public final class VM: @unchecked Sendable {
             arr[i] = value; collection = .array(arr)
         case (.dictionary(var d), .string(let k)):
             d[k] = value; collection = .dictionary(d)
+        case (.dictionary(var d), _):
+            let k = index.description; d[k] = value; collection = .dictionary(d)
         default: throw InterpreterError.typeMismatch("Cannot subscript \(collection.typeName)", at: loc())
         }
     }
