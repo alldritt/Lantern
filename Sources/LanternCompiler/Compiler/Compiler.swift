@@ -621,13 +621,20 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     chunk.write(.dup)
                     switch pattern {
                     case .expression(let expr):
-                        // Handle implicit member access patterns like `.north` in switch cases
-                        if let member = expr as? MemberAccessNode,
-                           member.object is SelfNode,
-                           case .enumCase(let typeName) = symbolTable.lookup(member.member)?.kind {
-                            let qualifiedName = "\(typeName).\(member.member)"
-                            let nameIndex = chunk.constantPool.addString(qualifiedName)
-                            Instruction.loadGlobal(nameIndex, into: &chunk)
+                        // Handle implicit member access patterns like `.north` in switch
+                        if let member = expr as? MemberAccessNode, member.object is SelfNode {
+                            // Try to find the enum type by checking all registered enum types
+                            var found = false
+                            for typeInfo in typeDebugInfo where typeInfo.kind == .enum {
+                                if typeInfo.properties.contains(where: { $0.name == member.member }) {
+                                    let qualifiedName = "\(typeInfo.name).\(member.member)"
+                                    let nameIndex = chunk.constantPool.addString(qualifiedName)
+                                    Instruction.loadGlobal(nameIndex, into: &chunk)
+                                    found = true
+                                    break
+                                }
+                            }
+                            if !found { compileExpression(expr) }
                         } else {
                             compileExpression(expr)
                         }

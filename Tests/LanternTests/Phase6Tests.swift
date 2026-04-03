@@ -81,7 +81,60 @@ struct Phase6Tests {
         let d = Direction.north
         print(d)
         """
-        // EnumCaseRef prints as "Direction.north"
         #expect(lanternOutput(src) == "Direction.north")
+    }
+
+    @Test func enumSwitch() {
+        let src = """
+        enum Direction {
+            case north, south, east, west
+        }
+        let d = Direction.north
+        switch d {
+        case .north: print("north")
+        case .south: print("south")
+        case .east: print("east")
+        case .west: print("west")
+        }
+        """
+        #expect(lanternOutput(src) == "north")
+    }
+
+    @Test func doCatch() {
+        let src = """
+        enum MyError: Error {
+            case bad
+        }
+        func check(_ n: Int) throws -> Int {
+            if n < 0 { throw MyError.bad }
+            return n
+        }
+        do {
+            let x = try check(-1)
+            print(x)
+        } catch {
+            print("caught")
+        }
+        """
+        #expect(lanternOutput(src) == "caught")
+    }
+
+    @Test func doCatchSuccess() {
+        let src = """
+        enum MyError: Error {
+            case bad
+        }
+        func check(_ n: Int) throws -> Int {
+            if n < 0 { throw MyError.bad }
+            return n
+        }
+        do {
+            let x = try check(42)
+            print(x)
+        } catch {
+            print("caught")
+        }
+        """
+        #expect(lanternOutput(src) == "42")
     }
 }

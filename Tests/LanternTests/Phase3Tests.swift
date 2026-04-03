@@ -105,6 +105,19 @@ struct Phase3Tests {
         #expect(lanternOutput(src) == "3")
     }
 
+    @Test func closure_captures_global() {
+        let src = """
+        let offset = 10
+        let addOffset = { (n: Int) -> Int in
+            return n + offset
+        }
+        print(addOffset(5))
+        """
+        #expect(lanternOutput(src) == "15")
+    }
+
+    // function_returns_function — requires true closure captures (future)
+
     @Test func for_loop_compound_add() {
         let src = "var s = 0\nfor i in 1...3 {\n    s += i\n}\nprint(s)"
         #expect(lanternOutput(src) == "6")
