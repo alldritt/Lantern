@@ -135,6 +135,16 @@ public final class Interpreter {
         }
         vm.environment.setGlobal("type", value: .nativeFunction(typeOfFn))
 
+        // zip()
+        let zipFn = NativeFunctionRef(name: "zip", arity: 2) { args in
+            guard case .array(let a) = args[0], case .array(let b) = args[1] else { return .array([]) }
+            let count = Swift.min(a.count, b.count)
+            var result: [Value] = []
+            for i in 0..<count { result.append(.array([a[i], b[i]])) }
+            return .array(result)
+        }
+        vm.environment.setGlobal("zip", value: .nativeFunction(zipFn))
+
         // Operator functions as values (for reduce(0, +) etc.)
         let addOpFn = NativeFunctionRef(name: "+", arity: 2) { args in
             let a = args[0], b = args[1]

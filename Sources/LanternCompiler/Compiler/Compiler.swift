@@ -822,6 +822,15 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
             emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: defaults, kind: .struct)
         }
+
+        // Compile static stored properties AFTER the constructor is available
+        for member in decl.members {
+            if let prop = member as? PropertyNode, prop.isStatic, let initializer = prop.initializer {
+                compileExpression(initializer)
+                let nameIndex = chunk.constantPool.addString("\(decl.name).\(prop.name)")
+                Instruction.storeGlobal(nameIndex, into: &chunk)
+            }
+        }
     }
 
     private func compileClassDeclaration(_ decl: ClassDeclarationNode) {

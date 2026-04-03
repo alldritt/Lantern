@@ -917,7 +917,10 @@ public final class VM: @unchecked Sendable {
             case "flatMap":
                 guard let transform = args.first else { try stack.push(.nil_); return false }
                 let mapped = try invokeValue(transform, args: [inner])
-                try stack.push(mapped) // flatMap doesn't double-wrap
+                // flatMap: if result is already optional, don't double-wrap
+                if case .optional = mapped { try stack.push(mapped) }
+                else if case .nil_ = mapped { try stack.push(.nil_) }
+                else { try stack.push(.optional(mapped)) }
                 return false
             default:
                 // Optional chaining: unwrap and call method on inner value
