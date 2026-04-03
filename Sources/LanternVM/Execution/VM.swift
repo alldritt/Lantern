@@ -976,13 +976,15 @@ public final class VM: @unchecked Sendable {
             let qualifiedName = "\(lookupTypeName).\(name)"
             if let method = environment.getGlobal(qualifiedName) {
                 let retIP = ip + 4
-                let isInstanceCall: Bool
+                // Determine if this is an instance method (pass self) or static (no self)
+                // If the receiver is a type constructor (closure/nativeFunction), it's static
+                let isStaticCall: Bool
                 switch receiver {
-                case .instance, .enumCase: isInstanceCall = true
-                default: isInstanceCall = false
+                case .closure, .nativeFunction: isStaticCall = true
+                default: isStaticCall = false
                 }
-                if isInstanceCall {
-                    // Instance/enum method: pass self as first arg
+                if !isStaticCall {
+                    // Instance method: pass self as first arg
                     try stack.push(method)
                     try stack.push(receiver)
                     for arg in args { try stack.push(arg) }
