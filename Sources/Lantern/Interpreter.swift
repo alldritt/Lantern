@@ -62,6 +62,11 @@ public final class Interpreter {
             case .int(let i): return .string(String(i))
             case .double(let d): return .string(String(d))
             case .bool(let b): return .string(String(b))
+            case .array(let arr):
+                // String(["h","e","l","l","o"]) → "hello" (for reversed strings etc.)
+                let chars = arr.compactMap { $0.stringValue }
+                if chars.count == arr.count { return .string(chars.joined()) }
+                return .string(arg.description)
             default: return .string(arg.description)
             }
         }

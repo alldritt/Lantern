@@ -884,6 +884,8 @@ public final class VM: @unchecked Sendable {
                 result = .array(s.split(separator: sep).map { .string(String($0)) })
             case "trimmingCharacters":
                 result = .string(s.trimmingCharacters(in: .whitespacesAndNewlines))
+            case "reversed":
+                result = .array(s.reversed().map { .string(String($0)) })
             default:
                 // Try type-qualified global lookup (extension methods)
                 let qualifiedName = "String.\(name)"
@@ -1090,6 +1092,11 @@ public final class VM: @unchecked Sendable {
             // Optional chaining on nil: return nil
             return .nil_
         default:
+            // Check for computed property getter from extensions
+            let getterName = "\(value.typeName).__get_\(name)"
+            if let getter = environment.getGlobal(getterName) {
+                return try invokeValue(getter, args: [value])
+            }
             throw InterpreterError.undefinedProperty(name, on: value.typeName, at: loc())
         }
     }
