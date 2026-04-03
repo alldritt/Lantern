@@ -1076,6 +1076,10 @@ public final class VM: @unchecked Sendable {
         case .enumCase(let ref):
             switch name {
             case "rawValue": return ref.rawValue ?? .nil_
+            case "caseName": return .string(ref.caseName)
+            case "associatedValues":
+                if let av = ref.associatedValues { return .array(av) }
+                return .nil_
             default:
                 // Check for computed property getter on enum type
                 let getterName = "\(ref.typeName).__get_\(name)"

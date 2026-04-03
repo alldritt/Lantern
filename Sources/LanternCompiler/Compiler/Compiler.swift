@@ -145,8 +145,24 @@ public final class BytecodeCompiler: @unchecked Sendable {
         if let varDecl = stmt as? VariableDeclarationNode {
             compileVariableDeclaration(varDecl)
         } else if let exprStmt = stmt as? ExpressionStatementNode {
-            compileExpression(exprStmt.expression)
-            chunk.write(.pop)
+            // Check for mutating method calls that need store-back
+            if let call = exprStmt.expression as? FunctionCallNode,
+               let memberAccess = call.callee as? MemberAccessNode,
+               let receiver = memberAccess.object as? IdentifierNode,
+               isMutatingMethod(memberAccess.member) {
+                // Compile the method call
+                compileExpression(exprStmt.expression)
+                // Store the result back to the receiver variable
+                if let local = scopeTracker.resolve(receiver.name) {
+                    Instruction.storeLocal(local.slot, into: &chunk)
+                } else {
+                    let nameIndex = chunk.constantPool.addString(receiver.name)
+                    Instruction.storeGlobal(nameIndex, into: &chunk)
+                }
+            } else {
+                compileExpression(exprStmt.expression)
+                chunk.write(.pop)
+            }
         } else if let ifStmt = stmt as? IfStatementNode {
             compileIfStatement(ifStmt)
         } else if let guardStmt = stmt as? GuardStatementNode {
@@ -1421,6 +1437,15 @@ public final class BytecodeCompiler: @unchecked Sendable {
         "print", "debugPrint", "String", "Int", "Double", "Bool", "Array",
         "abs", "min", "max", "type", "zip", "+", "*"
     ]
+
+    private static let mutatingMethods: Set<String> = [
+        "append", "remove", "removeLast", "removeAll", "removeValue",
+        "insert", "sort", "reverse", "shuffle", "swapAt"
+    ]
+
+    private func isMutatingMethod(_ name: String) -> Bool {
+        Self.mutatingMethods.contains(name)
+    }
 
     private func isKnownGlobal(_ name: String) -> Bool {
         Self.knownBuiltins.contains(name)
