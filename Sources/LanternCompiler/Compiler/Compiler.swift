@@ -778,12 +778,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
-            } else if let prop = member as? PropertyNode {
+            } else if let prop = member as? PropertyNode, !prop.isStatic {
                 properties.append(PropertyInfo(
                     name: prop.name,
                     typeAnnotation: prop.typeAnnotation,
-                    isMutable: prop.isMutable,
-                    isStatic: prop.isStatic
+                    isMutable: prop.isMutable
                 ))
                 }
         }
@@ -1239,6 +1238,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
         for member in ext.members {
             if let funcDecl = member as? FunctionDeclarationNode {
                 compileTypeMethod(funcDecl, typeName: typeName)
+            } else if let computed = member as? ComputedPropertyNode {
+                compileComputedProperty(computed, typeName: typeName)
             } else {
                 compileStatement(member)
             }

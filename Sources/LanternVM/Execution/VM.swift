@@ -405,12 +405,11 @@ public final class VM: @unchecked Sendable {
         // Error handling
         case .throw_:
             let err = stack.pop()
+            // Run defers before unwinding
+            try runDefers()
             if let handler = errorHandlers.popLast() {
-                // Unwind stack to the handler's depth
                 while stack.count > handler.stackDepth { _ = stack.pop() }
-                // Unwind call stack
                 while callStack.count > handler.callDepth { callStack.removeLast() }
-                // Push the error value for catch blocks to use
                 try stack.push(err)
                 ip = handler.catchIP
             } else {
