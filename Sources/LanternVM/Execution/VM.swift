@@ -1129,9 +1129,17 @@ public final class VM: @unchecked Sendable {
             guard i >= 0 && i < arr.count else { throw InterpreterError.indexOutOfBounds(i, count: arr.count, at: loc()) }
             return arr[i]
         case (.dictionary(let d), .string(let k)): return .optional(d[k])
+        case (.dictionary(let d), .int(let i)):
+            // Int index: access by position (for for-in iteration)
+            let sorted = d.sorted(by: { $0.key < $1.key })
+            guard i >= 0 && i < sorted.count else { return .nil_ }
+            return .array([.string(sorted[i].key), sorted[i].value])
         case (.dictionary(let d), _):
-            // Non-string key: convert to string representation
             let k = index.description; return .optional(d[k])
+        case (.nil_, _), (.optional(.none), _):
+            return .nil_ // optional chaining on nil returns nil
+        case (.optional(.some(let inner)), _):
+            return .optional(try getIndex(inner, index))
         default: throw InterpreterError.typeMismatch("Cannot subscript \(collection.typeName) with \(index.typeName)", at: loc())
         }
     }
