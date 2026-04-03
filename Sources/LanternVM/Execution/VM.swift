@@ -600,9 +600,15 @@ public final class VM: @unchecked Sendable {
 
             // Run until return (frame is popped)
             let targetDepth = savedCallStack.count
+            var stepCount = 0
             while callStack.count > targetDepth {
                 guard ip < program.bytecode.count else { break }
                 guard let raw = readU8(at: ip), let opcode = Opcode(rawValue: raw) else { break }
+                stepCount += 1
+                executionCount += 1
+                if stepCount > 10000 || executionCount > executionLimit {
+                    throw InterpreterError.executionLimitExceeded(at: loc())
+                }
                 try execute(opcode)
                 if case .halted = state { break }
                 if case .error = state { break }

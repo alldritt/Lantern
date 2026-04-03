@@ -33,7 +33,7 @@ struct ConformanceRunner {
                 let interp = Interpreter()
                 let output = CapturedOutputHandler()
                 interp.outputHandler = output
-                interp.maxExecutionSteps = 100_000 // cap per test to prevent hangs
+                interp.maxExecutionSteps = 10_000 // cap per test to prevent hangs
 
                 let result = interp.run(source: test.source, fileName: test.fileName)
                 let captured = output.printOutput.joined().trimmingCharacters(in: .newlines)
