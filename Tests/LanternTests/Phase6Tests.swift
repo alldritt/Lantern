@@ -84,6 +84,26 @@ struct Phase6Tests {
         #expect(lanternOutput(src) == "Direction.north")
     }
 
+    @Test func todoList() {
+        let src = """
+        struct Todo {
+            let title: String
+            var isDone: Bool
+        }
+        var todos = [
+            Todo(title: "Buy groceries", isDone: false),
+            Todo(title: "Call dentist", isDone: true),
+            Todo(title: "Write report", isDone: false)
+        ]
+        let pending = todos.filter { !$0.isDone }
+        print("\\(pending.count) pending tasks:")
+        for todo in pending {
+            print("- \\(todo.title)")
+        }
+        """
+        #expect(lanternOutput(src) == "2 pending tasks:\n- Buy groceries\n- Write report")
+    }
+
     @Test func enumSwitch() {
         let src = """
         enum Direction {
