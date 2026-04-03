@@ -55,9 +55,22 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // First pass: register top-level declarations
         registerTopLevelSymbols(ast)
 
-        // Second pass: compile statements
+        // Second pass: compile declarations first (hoisting)
         for statement in ast.statements {
-            compileStatement(statement)
+            if statement is FunctionDeclarationNode || statement is StructDeclarationNode ||
+               statement is ClassDeclarationNode || statement is EnumDeclarationNode ||
+               statement is ExtensionNode {
+                compileStatement(statement)
+            }
+        }
+
+        // Third pass: compile remaining statements
+        for statement in ast.statements {
+            if !(statement is FunctionDeclarationNode || statement is StructDeclarationNode ||
+                 statement is ClassDeclarationNode || statement is EnumDeclarationNode ||
+                 statement is ExtensionNode) {
+                compileStatement(statement)
+            }
         }
 
         // Emit halt
