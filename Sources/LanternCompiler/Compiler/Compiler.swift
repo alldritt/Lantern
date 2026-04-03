@@ -791,7 +791,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // Compile methods and computed properties
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
-                compileTypeMethod(funcDecl, typeName: decl.name)
+                if funcDecl.isStatic {
+                    compileStaticMethod(funcDecl, typeName: decl.name)
+                } else {
+                    compileTypeMethod(funcDecl, typeName: decl.name)
+                }
             } else if let computed = member as? ComputedPropertyNode {
                 compileComputedProperty(computed, typeName: decl.name)
             }
@@ -844,7 +848,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // Compile methods and computed properties
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
-                compileTypeMethod(funcDecl, typeName: decl.name)
+                if funcDecl.isStatic {
+                    compileStaticMethod(funcDecl, typeName: decl.name)
+                } else {
+                    compileTypeMethod(funcDecl, typeName: decl.name)
+                }
             } else if let computed = member as? ComputedPropertyNode {
                 compileComputedProperty(computed, typeName: decl.name)
             }
@@ -931,6 +939,57 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     /// Generate a memberwise initializer stored as a global
+    /// Compile a static method as "TypeName.methodName" (no self parameter).
+    private func compileStaticMethod(_ decl: FunctionDeclarationNode, typeName: String) {
+        let qualifiedName = "\(typeName).\(decl.name)"
+
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
+
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
+        scopeTracker.pushScope()
+
+        // No self parameter for static methods
+        for param in decl.parameters {
+            scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
+        }
+
+        for stmt in decl.body.statements {
+            compileStatement(stmt)
+        }
+
+        if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {
+            chunk.write(.returnVoid)
+        }
+
+        _ = scopeTracker.popScope()
+        scopeTracker.restoreSlotState(savedSlots)
+
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        let params = decl.parameters.map {
+            ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation)
+        }
+
+        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [])
+        let funcIndex = chunk.constantPool.addFunction(funcRef)
+
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: qualifiedName,
+            parameterNames: params.map(\.name),
+            sourceRange: (start: decl.location, end: decl.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
+        let nameIndex = chunk.constantPool.addString(qualifiedName)
+        chunk.write(.closure)
+        chunk.writeU16(funcIndex)
+        chunk.write(0)
+        Instruction.storeGlobal(nameIndex, into: &chunk)
+    }
+
     /// Compile a computed property getter (and optionally setter) as methods.
     private func compileComputedProperty(_ prop: ComputedPropertyNode, typeName: String) {
         compileComputedPropertyDirect(prop, typeName: typeName)
@@ -1121,8 +1180,24 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
         }
 
-        // For enums, store case names as properties (PropertyInfo with name = case name)
-        let caseInfos = decl.cases.map { PropertyInfo(name: $0.name, isMutable: false) }
+        // For enums, store case names as properties
+        // Use typeAnnotation to carry explicit raw values
+        var nextIntRaw = 0
+        let caseInfos = decl.cases.map { enumCase -> PropertyInfo in
+            var rawAnnotation: String? = nil
+            if let rawExpr = enumCase.rawValue {
+                if let intLit = rawExpr as? IntLiteralNode {
+                    rawAnnotation = "\(intLit.value)"
+                    nextIntRaw = intLit.value + 1
+                } else if let strLit = rawExpr as? StringLiteralNode {
+                    rawAnnotation = "\"\(strLit.value)\""
+                }
+            } else if decl.conformances.contains("Int") {
+                rawAnnotation = "\(nextIntRaw)"
+                nextIntRaw += 1
+            }
+            return PropertyInfo(name: enumCase.name, typeAnnotation: rawAnnotation, isMutable: false)
+        }
         typeDebugInfo.append(TypeDebugInfo(
             name: decl.name,
             kind: .enum,

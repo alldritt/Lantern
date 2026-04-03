@@ -942,16 +942,30 @@ public final class VM: @unchecked Sendable {
             throw InterpreterError.undefinedMethod(name, on: "Range", at: loc())
 
         default:
-            // Try type-qualified method lookup (e.g., "Greeter.greet")
-            let qualifiedName = "\(receiver.typeName).\(name)"
+            // Try type-qualified method lookup
+            var lookupTypeName = receiver.typeName
+            // For closures that are type constructors, use the closure's function name as type
+            if case .closure(let ref) = receiver {
+                lookupTypeName = ref.function.name
+            } else if case .nativeFunction(let ref) = receiver {
+                lookupTypeName = ref.name
+            }
+            let qualifiedName = "\(lookupTypeName).\(name)"
             if let method = environment.getGlobal(qualifiedName) {
-                // Push method, then receiver (self) and args, then call
-                try stack.push(method)
-                try stack.push(receiver)
-                for arg in args { try stack.push(arg) }
-                let retIP = ip + 4 // return address is past callMethod opcode
-                try callFunction(argCount: args.count + 1, returnIP: retIP) // +1 for self
-                return true // IP handled by callFunction
+                let retIP = ip + 4
+                if case .instance = receiver {
+                    // Instance method: pass self as first arg
+                    try stack.push(method)
+                    try stack.push(receiver)
+                    for arg in args { try stack.push(arg) }
+                    try callFunction(argCount: args.count + 1, returnIP: retIP)
+                } else {
+                    // Static method or type-level call: no self
+                    try stack.push(method)
+                    for arg in args { try stack.push(arg) }
+                    try callFunction(argCount: args.count, returnIP: retIP)
+                }
+                return true
             }
             // Fallback: check protocol/conformance chain for default implementations
             if let typeInfo = program.typeTable.first(where: { $0.name == receiver.typeName }) {
@@ -1007,6 +1021,11 @@ public final class VM: @unchecked Sendable {
                 return try invokeValue(getter, args: [value])
             }
             throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
+        case .enumCase(let ref):
+            switch name {
+            case "rawValue": return ref.rawValue ?? .nil_
+            default: throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
+            }
         case .optional(.some(let inner)):
             // Optional chaining: unwrap and access property
             let result = try getProperty(inner, name: name)

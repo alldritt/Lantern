@@ -190,9 +190,27 @@ public final class Interpreter {
     /// Register enum case values as globals from the compiled program's type table.
     private func registerEnumCases(from program: CompiledProgram) {
         for typeInfo in program.typeTable where typeInfo.kind == .enum {
-            for prop in typeInfo.properties {
+            // Determine raw value type from conformances
+            let hasIntRaw = typeInfo.conformances.contains("Int")
+            let hasStringRaw = typeInfo.conformances.contains("String")
+
+            for (i, prop) in typeInfo.properties.enumerated() {
                 let qualifiedName = "\(typeInfo.name).\(prop.name)"
-                let caseRef = EnumCaseRef(typeName: typeInfo.name, caseName: prop.name)
+                var rawValue: Value? = nil
+                if hasIntRaw {
+                    // Auto-assign int raw values starting from 0
+                    rawValue = .int(i)
+                } else if hasStringRaw {
+                    // String raw value = case name
+                    rawValue = .string(prop.name)
+                }
+                // Check if typeAnnotation carries an explicit raw value
+                if let annotation = prop.typeAnnotation, let intVal = Int(annotation) {
+                    rawValue = .int(intVal)
+                } else if let annotation = prop.typeAnnotation, annotation.hasPrefix("\"") {
+                    rawValue = .string(String(annotation.dropFirst().dropLast()))
+                }
+                let caseRef = EnumCaseRef(typeName: typeInfo.name, caseName: prop.name, rawValue: rawValue)
                 vm.environment.setGlobal(qualifiedName, value: .enumCase(caseRef))
             }
         }
