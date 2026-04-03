@@ -46,4 +46,6 @@ struct Phase1StringTests {
     @Test func string_literal() { #expect(lanternOutput(#"print("Hello")"#) == "Hello") }
     @Test func string_concat() { #expect(lanternOutput(#"print("Hello" + " " + "World")"#) == "Hello World") }
     @Test func string_variable() { #expect(lanternOutput("let s = \"Hello\"\nprint(s)") == "Hello") }
+    @Test func escape_newline() { #expect(lanternOutput("print(\"A\\nB\")") == "A\nB") }
+    @Test func escape_tab() { #expect(lanternOutput("print(\"A\\tB\")") == "A\tB") }
 }
