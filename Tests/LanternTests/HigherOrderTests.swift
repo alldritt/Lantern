@@ -8,6 +8,11 @@ struct HigherOrderTests {
         #expect(lanternOutput("print([1, 2, 3, 4, 5].reduce(0) { $0 + $1 })") == "15")
     }
 
+    @Test func reduceSimpleConcat() {
+        // Simpler reduce test first
+        #expect(lanternOutput(#"print(["a", "b", "c"].reduce("") { $0 + $1 })"#) == "abc")
+    }
+
     @Test func reduceString() {
         let src = """
         let joined = ["a", "b", "c"].reduce("") { result, item in

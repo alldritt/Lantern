@@ -21,6 +21,8 @@ public final class VM: @unchecked Sendable {
     /// Stack of error handlers for do-catch blocks.
     /// Each entry: (catchIP: bytecode offset to jump to, stackDepth: stack count at pushHandler, callDepth: call stack count)
     private var errorHandlers: [(catchIP: Int, stackDepth: Int, callDepth: Int)] = []
+    /// Stack of deferred block addresses (LIFO execution on scope exit).
+    private var deferStack: [Int] = []
 
     // MARK: - Debug hooks
 
@@ -47,7 +49,7 @@ public final class VM: @unchecked Sendable {
 
     public func load(_ program: CompiledProgram) {
         self.program = program; ip = 0; stack.reset()
-        callStack.removeAll(); errorHandlers.removeAll(); executionCount = 0; state = .ready
+        callStack.removeAll(); errorHandlers.removeAll(); deferStack.removeAll(); executionCount = 0; state = .ready
     }
 
     // MARK: - Execution Control
@@ -223,9 +225,9 @@ public final class VM: @unchecked Sendable {
             guard let argc = readU8(at: ip + 1) else { throw decodeError() }
             try callFunction(argCount: Int(argc)); // ip set by call
         case .return_:
-            let rv = stack.pop(); try returnFromFunction(); try stack.push(rv)
+            let rv = stack.pop(); try runDefers(); try returnFromFunction(); try stack.push(rv)
         case .returnVoid:
-            try returnFromFunction(); try stack.push(.void)
+            try runDefers(); try returnFromFunction(); try stack.push(.void)
         case .closure:
             guard let fi = readU16(at: ip + 1), let cc = readU8(at: ip + 3),
                   let fn = program.constantPool.function(at: fi) else { throw decodeError() }
@@ -423,10 +425,11 @@ public final class VM: @unchecked Sendable {
             _ = errorHandlers.popLast()
             ip += 1
         case .deferPush:
-            guard let _ = readU16(at: ip + 1) else { throw decodeError() }
-            ip += 3 // defer registration — stub
+            guard let blockAddr = readU16(at: ip + 1) else { throw decodeError() }
+            deferStack.append(Int(blockAddr))
+            ip += 3
         case .deferPop:
-            ip += 1 // defer execution — stub
+            ip += 1 // no-op; defers run on return
 
         // SwiftUI state — stubs (implemented by bridge)
         case .stateInit, .stateGet, .stateSet, .bindingCreate, .publishSet:
@@ -570,6 +573,26 @@ public final class VM: @unchecked Sendable {
         // Truncate stack: remove locals, args, and the callee (1 below basePointer)
         stack.truncate(to: max(0, frame.basePointer - 1))
         ip = frame.ip
+    }
+
+    // MARK: - Defer Execution
+
+    private func runDefers() throws {
+        while let blockAddr = deferStack.popLast() {
+            let savedIP = ip
+            ip = blockAddr
+            // Execute until returnVoid (which the defer block ends with)
+            var steps = 0
+            while ip < program.bytecode.count {
+                steps += 1
+                if steps > 10000 { break }
+                guard let raw = readU8(at: ip), let opcode = Opcode(rawValue: raw) else { break }
+                if opcode == .returnVoid { ip = savedIP; return }
+                try execute(opcode)
+                if case .halted = state { break }
+            }
+            ip = savedIP
+        }
     }
 
     // MARK: - Value Invocation (for map/filter/reduce callbacks)
