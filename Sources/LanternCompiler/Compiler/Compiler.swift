@@ -425,7 +425,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         // Compile and store start as loop variable
         compileExpression(rangeExpr.left)
-        let varSlot = scopeTracker.declare(name: stmt.variableName, isMutable: true)
+        let loopVarName = stmt.variableName == "_" ? "__discard_\(chunk.count)" : stmt.variableName
+        let varSlot = scopeTracker.declare(name: loopVarName, isMutable: true)
         Instruction.storeLocal(varSlot, into: &chunk)
 
         let loopStart = chunk.count
@@ -1815,6 +1816,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     private func compileAssignment(_ assign: AssignmentNode) {
+        if let ident = assign.target as? IdentifierNode, ident.name == "_" {
+            // Wildcard discard: _ = expr — just evaluate and discard
+            compileExpression(assign.value)
+            return
+        }
         if let ident = assign.target as? IdentifierNode {
             // Check if this is an implicit self.property assignment inside a type method
             let isImplicitSelfProperty = compilingMethodOfType != nil

@@ -686,6 +686,8 @@ final class SyntaxTranslator: SyntaxVisitor {
                 return SelfNode(location: self.location(of: identExpr))
             }
             return IdentifierNode(name: name, location: self.location(of: identExpr))
+        } else if expr.is(DiscardAssignmentExprSyntax.self) {
+            return IdentifierNode(name: "_", location: self.location(of: expr))
         } else if let memberExpr = expr.as(MemberAccessExprSyntax.self) {
             return translateMemberAccess(memberExpr)
         } else if let callExpr = expr.as(FunctionCallExprSyntax.self) {
