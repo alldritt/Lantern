@@ -53,6 +53,87 @@ public final class Interpreter {
             return .void
         }
         vm.environment.setGlobal("debugPrint", value: .nativeFunction(debugPrintFn))
+
+        // String() — convert value to string
+        let stringFn = NativeFunctionRef(name: "String", arity: 1) { args in
+            guard let arg = args.first else { return .string("") }
+            switch arg {
+            case .string(let s): return .string(s)
+            case .int(let i): return .string(String(i))
+            case .double(let d): return .string(String(d))
+            case .bool(let b): return .string(String(b))
+            default: return .string(arg.description)
+            }
+        }
+        vm.environment.setGlobal("String", value: .nativeFunction(stringFn))
+
+        // Int() — convert value to int
+        let intFn = NativeFunctionRef(name: "Int", arity: 1) { args in
+            guard let arg = args.first else { return .nil_ }
+            switch arg {
+            case .int(let i): return .int(i)
+            case .double(let d): return .int(Int(d))
+            case .string(let s): return s.isEmpty ? .nil_ : (Int(s).map { .int($0) } ?? .nil_)
+            default: return .nil_
+            }
+        }
+        vm.environment.setGlobal("Int", value: .nativeFunction(intFn))
+
+        // Double() — convert value to double
+        let doubleFn = NativeFunctionRef(name: "Double", arity: 1) { args in
+            guard let arg = args.first else { return .nil_ }
+            switch arg {
+            case .double(let d): return .double(d)
+            case .int(let i): return .double(Double(i))
+            case .string(let s): return Double(s).map { .double($0) } ?? .nil_
+            default: return .nil_
+            }
+        }
+        vm.environment.setGlobal("Double", value: .nativeFunction(doubleFn))
+
+        // abs()
+        let absFn = NativeFunctionRef(name: "abs", arity: 1) { args in
+            guard let arg = args.first else { return .nil_ }
+            switch arg {
+            case .int(let i): return .int(abs(i))
+            case .double(let d): return .double(abs(d))
+            default: return arg
+            }
+        }
+        vm.environment.setGlobal("abs", value: .nativeFunction(absFn))
+
+        // min/max
+        let minFn = NativeFunctionRef(name: "min", arity: -1) { args in
+            guard args.count >= 2 else { return args.first ?? .nil_ }
+            if let a = args[0].intValue, let b = args[1].intValue { return .int(Swift.min(a, b)) }
+            if let a = args[0].doubleValue, let b = args[1].doubleValue { return .double(Swift.min(a, b)) }
+            return args[0]
+        }
+        vm.environment.setGlobal("min", value: .nativeFunction(minFn))
+
+        let maxFn = NativeFunctionRef(name: "max", arity: -1) { args in
+            guard args.count >= 2 else { return args.first ?? .nil_ }
+            if let a = args[0].intValue, let b = args[1].intValue { return .int(Swift.max(a, b)) }
+            if let a = args[0].doubleValue, let b = args[1].doubleValue { return .double(Swift.max(a, b)) }
+            return args[0]
+        }
+        vm.environment.setGlobal("max", value: .nativeFunction(maxFn))
+
+        // Array() — convert to array
+        let arrayFn = NativeFunctionRef(name: "Array", arity: 1) { args in
+            guard let arg = args.first else { return .array([]) }
+            if case .array(let a) = arg { return .array(a) }
+            if case .string(let s) = arg { return .array(s.map { .string(String($0)) }) }
+            return .array([arg])
+        }
+        vm.environment.setGlobal("Array", value: .nativeFunction(arrayFn))
+
+        // type(of:) — return type name
+        let typeOfFn = NativeFunctionRef(name: "type", arity: 1) { args in
+            guard let arg = args.first else { return .string("Void") }
+            return .string(arg.typeName)
+        }
+        vm.environment.setGlobal("type", value: .nativeFunction(typeOfFn))
     }
 
     /// Compile Swift source into a compiled program.
@@ -81,7 +162,7 @@ public final class Interpreter {
     /// Execute a previously compiled program.
     @discardableResult
     public func execute(program: CompiledProgram) -> Result<Value, InterpreterError> {
-        vm.load(program)
+        _debugger.load(program)
         registerBuiltins()
         registerEnumCases(from: program)
         vm.run()
