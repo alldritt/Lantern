@@ -178,8 +178,11 @@ public final class VM: @unchecked Sendable {
         case .storeLocal:
             guard let slot = readU16(at: ip + 1) else { throw decodeError() }
             let idx = basePointer + Int(slot)
-            let value = stack.pop()
-            // Ensure the stack extends to cover this slot
+            var value = stack.pop()
+            // Copy struct instances for value semantics
+            if case .instance(let ref) = value, ref.kind == .struct {
+                value = .instance(ref.copy())
+            }
             while stack.count <= idx { try stack.push(.nil_) }
             stack[idx] = value
             ip += 3
@@ -189,7 +192,12 @@ public final class VM: @unchecked Sendable {
             try stack.push(v); ip += 3
         case .storeGlobal:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
-            environment.setGlobal(name, value: stack.pop()); ip += 3
+            var value = stack.pop()
+            // Copy struct instances for value semantics
+            if case .instance(let ref) = value, ref.kind == .struct {
+                value = .instance(ref.copy())
+            }
+            environment.setGlobal(name, value: value); ip += 3
         case .loadCapture:
             guard let idx = readU16(at: ip + 1), let caps = callStack.last?.captures, Int(idx) < caps.count else { throw decodeError() }
             try stack.push(caps[Int(idx)]); ip += 3
@@ -993,6 +1001,11 @@ public final class VM: @unchecked Sendable {
             }
         case .instance(let ref):
             if let v = ref.property(name) { return v }
+            // Check for computed property getter
+            let getterName = "\(ref.typeName).__get_\(name)"
+            if let getter = environment.getGlobal(getterName) {
+                return try invokeValue(getter, args: [value])
+            }
             throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
         case .optional(.some(let inner)):
             // Optional chaining: unwrap and access property

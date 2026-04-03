@@ -788,10 +788,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 }
         }
 
-        // Compile methods as "TypeName.methodName" globals
+        // Compile methods and computed properties
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
                 compileTypeMethod(funcDecl, typeName: decl.name)
+            } else if let computed = member as? ComputedPropertyNode {
+                compileComputedProperty(computed, typeName: decl.name)
             }
         }
 
@@ -839,10 +841,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
         }
 
-        // Compile methods
+        // Compile methods and computed properties
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
                 compileTypeMethod(funcDecl, typeName: decl.name)
+            } else if let computed = member as? ComputedPropertyNode {
+                compileComputedProperty(computed, typeName: decl.name)
             }
         }
 
@@ -927,6 +931,61 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     /// Generate a memberwise initializer stored as a global
+    /// Compile a computed property getter (and optionally setter) as methods.
+    private func compileComputedProperty(_ prop: ComputedPropertyNode, typeName: String) {
+        compileComputedPropertyDirect(prop, typeName: typeName)
+    }
+
+    private func compileComputedPropertyDirect(_ prop: ComputedPropertyNode, typeName: String) {
+        let getterName = "\(typeName).__get_\(prop.name)"
+
+        let jumpOver = Instruction.jump(into: &chunk)
+        let bodyStart = chunk.count
+
+        let savedSlots = scopeTracker.saveSlotState()
+        scopeTracker.restoreSlotState(0)
+        let savedMethod = compilingMethodOfType
+        compilingMethodOfType = typeName
+        scopeTracker.pushScope()
+        scopeTracker.declare(name: "self", isMutable: false)
+
+        for stmt in prop.getter.statements {
+            compileStatement(stmt)
+        }
+
+        if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {
+            chunk.write(.returnVoid)
+        }
+
+        _ = scopeTracker.popScope()
+        compilingMethodOfType = savedMethod
+        scopeTracker.restoreSlotState(savedSlots)
+
+        let bodyEnd = chunk.count
+        Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        let funcRef = FunctionRef(
+            name: getterName,
+            parameters: [ParameterInfo(name: "self")],
+            localCount: UInt16(1 + 16),
+            bytecode: []
+        )
+        let funcIndex = chunk.constantPool.addFunction(funcRef)
+
+        functionDebugInfo.append(FunctionDebugInfo(
+            name: getterName,
+            parameterNames: ["self"],
+            sourceRange: (start: prop.location, end: prop.location),
+            bytecodeRange: (start: bodyStart, end: bodyEnd)
+        ))
+
+        let nameIndex = chunk.constantPool.addString(getterName)
+        chunk.write(.closure)
+        chunk.writeU16(funcIndex)
+        chunk.write(0)
+        Instruction.storeGlobal(nameIndex, into: &chunk)
+    }
+
     /// Compile a custom init declaration as the type's constructor.
     /// init(params) { self.prop = param; ... } becomes a function that creates
     /// an empty instance, runs the body (with self at slot 0), and returns self.

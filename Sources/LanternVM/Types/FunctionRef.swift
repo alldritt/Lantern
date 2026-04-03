@@ -134,6 +134,11 @@ public final class InstanceRef: @unchecked Sendable {
     }
 
     public var propertyNames: [String] { storage.map(\.name) }
+
+    /// Create a shallow copy (for struct value semantics).
+    public func copy() -> InstanceRef {
+        InstanceRef(typeName: typeName, kind: kind, properties: storage)
+    }
 }
 
 /// A reference to an enum case value.
