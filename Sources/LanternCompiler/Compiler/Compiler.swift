@@ -1219,7 +1219,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
             Instruction.loadLocal(local.slot, into: &chunk)
         } else if compilingMethodOfType != nil && symbolTable.lookup(ident.name)?.isType != true {
             // Inside a type method body — unresolved identifiers are implicit self.property
-            Instruction.loadLocal(0, into: &chunk) // self
+            if let selfLocal = scopeTracker.resolve("self") {
+                Instruction.loadLocal(selfLocal.slot, into: &chunk)
+            } else {
+                Instruction.loadLocal(0, into: &chunk)
+            }
             let nameIndex = chunk.constantPool.addPropertyName(ident.name)
             Instruction.getProperty(nameIndex, into: &chunk)
         } else {
@@ -1384,7 +1388,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
             if isImplicitSelfProperty {
                 // setProperty expects stack: [self, value] — pops val (top), then inst
-                Instruction.loadLocal(0, into: &chunk) // self
+                if let selfLocal = scopeTracker.resolve("self") {
+                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                } else {
+                    Instruction.loadLocal(0, into: &chunk)
+                }
                 compileExpression(assign.value)
                 let nameIndex = chunk.constantPool.addPropertyName(ident.name)
                 Instruction.setProperty(nameIndex, into: &chunk)
