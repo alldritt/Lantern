@@ -198,6 +198,14 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         if let initializer = decl.initializer {
             compileExpression(initializer)
+            // Wrap in optional if type annotation indicates optional
+            if let type = decl.typeAnnotation, type.hasSuffix("?") {
+                // Only wrap if the value isn't already nil
+                // nil doesn't need wrapping
+                if !(initializer is NilLiteralNode) {
+                    chunk.write(.wrapOptional)
+                }
+            }
         } else {
             chunk.write(.constNil)
         }
@@ -1244,11 +1252,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             return
         case .nilCoalescing:
             compileExpression(binary.left)
-            chunk.write(.dup)
-            let jumpHasValue = Instruction.jumpIfTrue(into: &chunk)
-            chunk.write(.pop)
             compileExpression(binary.right)
-            Instruction.patchJump(at: jumpHasValue, in: &chunk)
+            chunk.write(.nilCoalesce) // VM handles unwrap-or-fallback
             return
         case .closedRange:
             compileExpression(binary.left)
