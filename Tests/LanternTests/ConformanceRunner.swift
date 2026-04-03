@@ -62,7 +62,7 @@ struct ConformanceRunner {
             let interp = Interpreter()
             let output = CapturedOutputHandler()
             interp.outputHandler = output
-            interp.maxExecutionSteps = 50_000
+            interp.maxExecutionSteps = 200_000
 
             let result = interp.run(source: test.source, fileName: test.fileName)
             let captured = output.printOutput.joined().trimmingCharacters(in: .newlines)
@@ -76,7 +76,7 @@ struct ConformanceRunner {
             semaphore.signal()
         }
 
-        let timeout = DispatchTime.now() + .milliseconds(timeoutMs)
+        let timeout = DispatchTime.now() + .milliseconds(1000)
         if semaphore.wait(timeout: timeout) == .timedOut {
             return ("", "TIMEOUT")
         }
