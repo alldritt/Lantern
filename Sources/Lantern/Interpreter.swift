@@ -39,7 +39,17 @@ public final class Interpreter {
     private func registerBuiltins() {
         // print — variadic, joins with space, appends newline
         let printFn = NativeFunctionRef(name: "print", arity: -1) { [weak self] args in
-            let text = args.map { $0.description }.joined(separator: " ")
+            let text = args.map { val -> String in
+                // Check for CustomStringConvertible (description computed property)
+                if case .instance(let ref) = val {
+                    let getterName = "\(ref.typeName).__get_description"
+                    if let getter = self?.vm.environment.getGlobal(getterName),
+                       let result = try? self?.vm.invokeValue(getter, args: [val]) {
+                        return result.description
+                    }
+                }
+                return val.description
+            }.joined(separator: " ")
             self?.outputHandler.handlePrint(text + "\n")
             self?.vm.delegate?.vm(self!.vm, didProduceOutput: text + "\n")
             return .void

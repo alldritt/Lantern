@@ -586,7 +586,7 @@ public final class VM: @unchecked Sendable {
                 steps += 1
                 if steps > 10000 { break }
                 guard let raw = readU8(at: ip), let opcode = Opcode(rawValue: raw) else { break }
-                if opcode == .returnVoid { ip = savedIP; return }
+                if opcode == .returnVoid { break } // end of this defer block
                 try execute(opcode)
                 if case .halted = state { break }
             }
