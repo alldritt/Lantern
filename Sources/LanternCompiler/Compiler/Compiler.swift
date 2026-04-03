@@ -657,23 +657,32 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
                 // Match: extract bindings, then execute catch body
                 scopeTracker.pushScope()
-                let slot = scopeTracker.declare(name: "error", isMutable: false)
+                // Store error as global for reliable access
+                let errorGlobalName = "__catch_error_\(chunk.count)"
                 chunk.write(.dup)
-                Instruction.storeLocal(slot, into: &chunk)
+                let errorNameIdx = chunk.constantPool.addString(errorGlobalName)
+                Instruction.storeGlobal(errorNameIdx, into: &chunk)
+                // Also declare as local for scope tracking
+                let slot = scopeTracker.declare(name: "error", isMutable: false)
+                _ = slot
 
                 // Extract associated value bindings
                 if !patternBindings.isEmpty {
+                    // Get associatedValues array from the error
                     let assocIdx = chunk.constantPool.addPropertyName("associatedValues")
-                    Instruction.loadLocal(slot, into: &chunk)
+                    let errorNI = chunk.constantPool.addString(errorGlobalName)
+                    Instruction.loadGlobal(errorNI, into: &chunk)
                     Instruction.getProperty(assocIdx, into: &chunk)
-                    let arrSlot = scopeTracker.declare(name: "__catch_assoc", isMutable: false)
-                    Instruction.storeLocal(arrSlot, into: &chunk)
+                    let arrGlobalName = "__catch_assoc_\(chunk.count)"
+                    let arrNI = chunk.constantPool.addString(arrGlobalName)
+                    Instruction.storeGlobal(arrNI, into: &chunk)
                     for (i, binding) in patternBindings.enumerated() {
-                        Instruction.loadLocal(arrSlot, into: &chunk)
+                        Instruction.loadGlobal(arrNI, into: &chunk)
                         Instruction.constInt(i, into: &chunk)
                         chunk.write(.getIndex)
-                        let bindSlot = scopeTracker.declare(name: binding, isMutable: false)
-                        Instruction.storeLocal(bindSlot, into: &chunk)
+                        let bindNI = chunk.constantPool.addString(binding)
+                        Instruction.storeGlobal(bindNI, into: &chunk)
+                        symbolTable.register(binding, kind: .global(isMutable: false), location: .unknown)
                     }
                 }
 
