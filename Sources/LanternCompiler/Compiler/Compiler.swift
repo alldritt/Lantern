@@ -1535,8 +1535,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
 
-        let savedSlots = scopeTracker.saveSlotState()
-        scopeTracker.restoreSlotState(0)
+        // Save FULL scope state and clear — closure has its own scope
+        let savedFullState = scopeTracker.saveFullState()
+        scopeTracker.restoreFullState(([], 0, 0))
         scopeTracker.pushScope()
         for param in closure.parameters {
             scopeTracker.declare(name: param, isMutable: false)
@@ -1562,7 +1563,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
         }
 
         _ = scopeTracker.popScope()
-        scopeTracker.restoreSlotState(savedSlots)
+        scopeTracker.restoreFullState(savedFullState)
         let bodyEnd = chunk.count
         Instruction.patchJump(at: jumpOver, in: &chunk)
 

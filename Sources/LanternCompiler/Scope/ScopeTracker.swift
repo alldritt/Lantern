@@ -83,6 +83,16 @@ public final class ScopeTracker: @unchecked Sendable {
     /// Restore slot counter after function body compilation.
     public func restoreSlotState(_ saved: UInt16) { nextSlot = saved }
 
+    /// Save full scope state (locals + slots + depth) for closure compilation.
+    public func saveFullState() -> ([Local], UInt16, Int) {
+        return (locals, nextSlot, scopeDepth)
+    }
+
+    /// Restore full scope state after closure compilation.
+    public func restoreFullState(_ state: ([Local], UInt16, Int)) {
+        locals = state.0; nextSlot = state.1; scopeDepth = state.2
+    }
+
     /// Reserve a specific number of initial slots (e.g., for function parameters).
     public func reserveSlots(_ count: UInt16) {
         if nextSlot < count {
