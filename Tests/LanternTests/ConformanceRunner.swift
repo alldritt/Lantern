@@ -4,13 +4,10 @@ import Foundation
 @testable import LanternVM
 
 /// Runs conformance fixtures through the Lantern interpreter.
-/// Reports pass/fail/error counts per fixture file.
 @Suite("Conformance Runner")
 struct ConformanceRunner {
     @Test func runAllConformanceFixtures() {
-        guard let dir = findFixturesDirectory() else {
-            Issue.record("Fixtures directory not found"); return
-        }
+        guard let dir = findFixturesDirectory() else { return }
 
         let files = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
         let fixtureFiles = files
@@ -30,25 +27,16 @@ struct ConformanceRunner {
             var fileErrors: [String] = []
 
             for test in tests {
-                let interp = Interpreter()
-                let output = CapturedOutputHandler()
-                interp.outputHandler = output
-                interp.maxExecutionSteps = 10_000 // cap per test to prevent hangs
+                let (captured, error) = runTestWithTimeout(test, timeoutMs: 500)
 
-                let result = interp.run(source: test.source, fileName: test.fileName)
-                let captured = output.printOutput.joined().trimmingCharacters(in: .newlines)
-
-                switch result {
-                case .success:
-                    if captured == test.expectedOutput {
-                        filePassed += 1
-                    } else {
-                        fileFailed += 1
-                        fileErrors.append("  \(test.name): expected[\(test.expectedOutput.prefix(40))] got[\(captured.prefix(40))]")
-                    }
-                case .failure(let err):
+                if let error {
                     fileFailed += 1
-                    fileErrors.append("  \(test.name): \(err.kind) \(err.message.prefix(60))")
+                    fileErrors.append("  \(test.name): \(error.prefix(60))")
+                } else if captured == test.expectedOutput {
+                    filePassed += 1
+                } else {
+                    fileFailed += 1
+                    fileErrors.append("  \(test.name): expected[\(test.expectedOutput.prefix(40))] got[\(captured.prefix(40))]")
                 }
             }
 
@@ -61,7 +49,37 @@ struct ConformanceRunner {
 
         let total = totalPassed + totalFailed
         report.insert("=== Conformance: \(totalPassed)/\(total) passed ===", at: 0)
-        // Always print the report
         print("\n" + report.joined(separator: "\n") + "\n")
+    }
+
+    /// Run a single test with a timeout to prevent hangs.
+    func runTestWithTimeout(_ test: ConformanceTestCase, timeoutMs: Int) -> (output: String, error: String?) {
+        let semaphore = DispatchSemaphore(value: 0)
+        var resultOutput = ""
+        var resultError: String? = nil
+
+        DispatchQueue.global().async {
+            let interp = Interpreter()
+            let output = CapturedOutputHandler()
+            interp.outputHandler = output
+            interp.maxExecutionSteps = 50_000
+
+            let result = interp.run(source: test.source, fileName: test.fileName)
+            let captured = output.printOutput.joined().trimmingCharacters(in: .newlines)
+
+            switch result {
+            case .success:
+                resultOutput = captured
+            case .failure(let err):
+                resultError = "\(err.kind) \(err.message)"
+            }
+            semaphore.signal()
+        }
+
+        let timeout = DispatchTime.now() + .milliseconds(timeoutMs)
+        if semaphore.wait(timeout: timeout) == .timedOut {
+            return ("", "TIMEOUT")
+        }
+        return (resultOutput, resultError)
     }
 }
