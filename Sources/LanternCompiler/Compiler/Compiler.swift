@@ -703,13 +703,23 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private func compileFunctionDeclaration(_ decl: FunctionDeclarationNode) {
         emitLocation(decl.location)
 
+        // Set up capture tracking for nested functions
+        let savedOuterLocals = outerLocals
+        let savedCapturedNames = capturedNames
+        var allOuterLocalsForFunc: [ScopeTracker.Local] = []
+        for name in scopeTracker.allLocalNames() {
+            if let local = scopeTracker.resolve(name) { allOuterLocalsForFunc.append(local) }
+        }
+        outerLocals = allOuterLocalsForFunc
+        capturedNames = []
+
         // Jump over the function body (it's inlined in the shared bytecode)
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
 
         // Compile function body inline — each function has its own slot space
-        let savedSlots = scopeTracker.saveSlotState()
-        scopeTracker.restoreSlotState(0)
+        let savedFullState = scopeTracker.saveFullState()
+        scopeTracker.restoreFullState(([], 0, 0))
         scopeTracker.pushScope()
         for param in decl.parameters {
             scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
@@ -742,10 +752,22 @@ public final class BytecodeCompiler: @unchecked Sendable {
         }
 
         _ = scopeTracker.popScope()
-        scopeTracker.restoreSlotState(savedSlots)
+        scopeTracker.restoreFullState(savedFullState)
 
         let bodyEnd = chunk.count
         Instruction.patchJump(at: jumpOver, in: &chunk)
+
+        let funcCaptureCount = capturedNames.count
+
+        // Push captured values in REVERSE order
+        for captureName in capturedNames.reversed() {
+            if let outerLocal = allOuterLocalsForFunc.first(where: { $0.name == captureName }) {
+                Instruction.loadLocal(outerLocal.slot, into: &chunk)
+            } else {
+                let ni = chunk.constantPool.addString(captureName)
+                Instruction.loadGlobal(ni, into: &chunk)
+            }
+        }
 
         let parameters = decl.parameters.map { param in
             ParameterInfo(
@@ -779,8 +801,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let nameIndex = chunk.constantPool.addString(decl.name)
         chunk.write(.closure)
         chunk.writeU16(funcIndex)
-        chunk.write(0) // No captures for top-level functions
+        chunk.write(UInt8(funcCaptureCount))
         Instruction.storeGlobal(nameIndex, into: &chunk)
+
+        // Restore capture state
+        outerLocals = savedOuterLocals
+        capturedNames = savedCapturedNames
     }
 
     private func compileStructDeclaration(_ decl: StructDeclarationNode) {
