@@ -1416,6 +1416,16 @@ public final class BytecodeCompiler: @unchecked Sendable {
         }
     }
 
+    /// Known builtin names that should NOT be treated as implicit self.property
+    private static let knownBuiltins: Set<String> = [
+        "print", "debugPrint", "String", "Int", "Double", "Bool", "Array",
+        "abs", "min", "max", "type", "zip", "+", "*"
+    ]
+
+    private func isKnownGlobal(_ name: String) -> Bool {
+        Self.knownBuiltins.contains(name)
+    }
+
     private func compileIdentifier(_ ident: IdentifierNode) {
         // Check locals first (inner to outer scope)
         if let local = scopeTracker.resolve(ident.name) {
@@ -1431,7 +1441,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 chunk.writeU16(UInt16(capturedNames.count - 1))
             }
             _ = outerLocal // suppress warning
-        } else if compilingMethodOfType != nil && symbolTable.lookup(ident.name)?.isType != true {
+        } else if compilingMethodOfType != nil
+                    && symbolTable.lookup(ident.name) == nil
+                    && !isKnownGlobal(ident.name) {
+            // Inside a type method body — truly unresolved identifiers are implicit self.property
             // Inside a type method body — unresolved identifiers are implicit self.property
             if let selfLocal = scopeTracker.resolve("self") {
                 Instruction.loadLocal(selfLocal.slot, into: &chunk)
