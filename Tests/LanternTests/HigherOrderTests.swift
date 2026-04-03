@@ -13,6 +13,11 @@ struct HigherOrderTests {
         #expect(lanternOutput(#"print(["a", "b", "c"].reduce("") { $0 + $1 })"#) == "abc")
     }
 
+    @Test func ternaryInClosure() {
+        // Simple ternary in closure
+        #expect(lanternOutput(#"print([1, 2, 3].map { $0 > 1 ? "big" : "small" })"#) == #"["small", "big", "big"]"#)
+    }
+
     @Test func reduceString() {
         let src = """
         let joined = ["a", "b", "c"].reduce("") { result, item in

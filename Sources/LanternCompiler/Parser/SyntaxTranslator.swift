@@ -943,6 +943,42 @@ final class SyntaxTranslator: SyntaxVisitor {
         if elements.count == 1 {
             return translateExpr(elements[0])
         }
+
+        // Check for ternary pattern: contains UnresolvedTernaryExprSyntax
+        for (i, elem) in elements.enumerated() {
+            if elem.is(UnresolvedTernaryExprSyntax.self) {
+                // Pattern: condition ? thenExpr : elseExpr
+                // Elements before '?' are the condition, after '?' is thenExpr, after ':' is elseExpr
+                let condElements = Array(elements[0..<i])
+                let ternary = elem.as(UnresolvedTernaryExprSyntax.self)!
+                // thenExpr is between ? and :
+                let thenExpr = ternary.thenExpression
+                // elseExpr is after the ternary element
+                let elseElements = Array(elements[(i+1)...])
+
+                // Compile condition from the elements before ?
+                let condition: ExpressionNode?
+                if condElements.count == 1 {
+                    condition = translateExpr(condElements[0])
+                } else {
+                    // Multi-element condition (e.g., x > 1)
+                    let condSeq = condElements.map { $0.trimmedDescription }.joined(separator: " ")
+                    // Re-parse as expression
+                    condition = foldSequenceWithPrecedence(condElements, location: self.location(of: expr))
+                }
+                let thenNode = translateExpr(ExprSyntax(thenExpr))
+                let elseNode: ExpressionNode?
+                if elseElements.count == 1 {
+                    elseNode = translateExpr(elseElements[0])
+                } else {
+                    elseNode = foldSequenceWithPrecedence(elseElements, location: self.location(of: expr))
+                }
+
+                guard let cond = condition, let then = thenNode, let els = elseNode else { break }
+                return TernaryExpressionNode(condition: cond, thenExpr: then, elseExpr: els, location: self.location(of: expr))
+            }
+        }
+
         // For 3-element sequences: left op right
         if elements.count == 3 {
             guard let left = translateExpr(elements[0]),
