@@ -563,12 +563,11 @@ public final class VM: @unchecked Sendable {
             // Allocate extra local slots beyond parameters
             let extra = max(0, Int(ref.function.localCount) - argCount)
             for _ in 0..<extra { try stack.push(.nil_) }
-            // Jump to function body in shared bytecode
-            if let fnInfo = program.functionTable.first(where: { $0.name == ref.function.name }) {
-                ip = fnInfo.bytecodeRange.start
-            } else {
+            // Jump to function body via stored offset (O(1) dispatch)
+            guard ref.function.bytecodeOffset >= 0 else {
                 throw InterpreterError.undefinedFunction(ref.function.name, at: loc())
             }
+            ip = ref.function.bytecodeOffset
 
         default:
             throw InterpreterError.notCallable(callee.typeName, at: loc())
@@ -630,11 +629,11 @@ public final class VM: @unchecked Sendable {
             let extra = max(0, Int(ref.function.localCount) - args.count)
             for _ in 0..<extra { try stack.push(.nil_) }
 
-            // Find function body
-            guard let fnInfo = program.functionTable.first(where: { $0.name == ref.function.name }) else {
+            // Jump to function body via stored offset
+            guard ref.function.bytecodeOffset >= 0 else {
                 throw InterpreterError.undefinedFunction(ref.function.name, at: loc())
             }
-            ip = fnInfo.bytecodeRange.start
+            ip = ref.function.bytecodeOffset
 
             // Run until return (frame is popped)
             let targetDepth = savedCallStack.count

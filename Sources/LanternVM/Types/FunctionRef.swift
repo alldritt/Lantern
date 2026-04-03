@@ -32,6 +32,10 @@ public struct FunctionRef: Sendable {
     /// Exception handler table for do/try/catch.
     public let exceptionHandlers: [ExceptionHandler]
 
+    /// Bytecode offset of this function's body in the shared program bytecode.
+    /// Set by the compiler. -1 means not yet resolved.
+    public var bytecodeOffset: Int
+
     public init(
         name: String,
         parameters: [ParameterInfo] = [],
@@ -39,7 +43,8 @@ public struct FunctionRef: Sendable {
         isAsync: Bool = false,
         isThrowing: Bool = false,
         bytecode: [UInt8] = [],
-        exceptionHandlers: [ExceptionHandler] = []
+        exceptionHandlers: [ExceptionHandler] = [],
+        bytecodeOffset: Int = -1
     ) {
         self.name = name
         self.parameters = parameters
@@ -48,6 +53,7 @@ public struct FunctionRef: Sendable {
         self.isThrowing = isThrowing
         self.bytecode = bytecode
         self.exceptionHandlers = exceptionHandlers
+        self.bytecodeOffset = bytecodeOffset
     }
 
     /// Number of required parameters.

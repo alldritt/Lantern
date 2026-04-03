@@ -837,7 +837,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             localCount: UInt16(decl.parameters.count + 16), // room for locals
             isAsync: decl.isAsync,
             isThrowing: decl.isThrowing,
-            bytecode: [] // body is inline in shared bytecode
+            bytecode: [],
+            bytecodeOffset: bodyStart
         )
 
         let funcIndex = chunk.constantPool.addFunction(funcRef)
@@ -1034,7 +1035,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
         var params = [ParameterInfo(label: nil, name: "self")]
         params += decl.parameters.map { ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation) }
 
-        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [])
+        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [], bytecodeOffset: bodyStart)
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
         functionDebugInfo.append(FunctionDebugInfo(
@@ -1086,7 +1087,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
             ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation)
         }
 
-        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [])
+        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [], bytecodeOffset: bodyStart)
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
         functionDebugInfo.append(FunctionDebugInfo(
@@ -1140,7 +1141,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             name: getterName,
             parameters: [ParameterInfo(name: "self")],
             localCount: UInt16(1 + 16),
-            bytecode: []
+            bytecode: [],
+            bytecodeOffset: bodyStart
         )
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
@@ -1194,7 +1196,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 name: setterName,
                 parameters: [ParameterInfo(name: "self"), ParameterInfo(name: "newValue")],
                 localCount: UInt16(2 + 16),
-                bytecode: []
+                bytecode: [],
+                bytecodeOffset: setBodyStart
             )
             let setFuncIndex = chunk.constantPool.addFunction(setFuncRef)
 
@@ -1266,7 +1269,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             name: typeName,
             parameters: params,
             localCount: UInt16(1 + params.count + 16),
-            bytecode: []
+            bytecode: [],
+            bytecodeOffset: bodyStart
         )
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
@@ -1316,7 +1320,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
         Instruction.patchJump(at: jumpOver, in: &chunk)
 
         let initParams = propNames.map { ParameterInfo(label: $0, name: $0) }
-        let initRef = FunctionRef(name: name, parameters: initParams, localCount: UInt16(propNames.count + 4), bytecode: [])
+        let initRef = FunctionRef(name: name, parameters: initParams, localCount: UInt16(propNames.count + 4), bytecode: [], bytecodeOffset: bodyStart)
         let funcIndex = chunk.constantPool.addFunction(initRef)
 
         functionDebugInfo.append(FunctionDebugInfo(
@@ -1742,7 +1746,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             name: closureName,
             parameters: params,
             localCount: UInt16(closure.parameters.count + 16),
-            bytecode: []
+            bytecode: [],
+            bytecodeOffset: bodyStart
         )
 
         let funcIndex = chunk.constantPool.addFunction(funcRef)
