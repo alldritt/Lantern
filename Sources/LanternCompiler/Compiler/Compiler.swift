@@ -1794,6 +1794,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     Instruction.storeLocal(local.slot, into: &chunk)
                 } else {
                     // Global variable
+                    // Check global immutability
+                    if case .global(let isMutable) = symbolTable.lookup(ident.name)?.kind, !isMutable {
+                        diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
+                    }
                     chunk.write(.dup)
                     let nameIndex = chunk.constantPool.addString(ident.name)
                     Instruction.storeGlobal(nameIndex, into: &chunk)
