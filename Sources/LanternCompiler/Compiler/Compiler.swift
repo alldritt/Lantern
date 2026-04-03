@@ -148,16 +148,25 @@ public final class BytecodeCompiler: @unchecked Sendable {
             // Check for mutating method calls that need store-back
             if let call = exprStmt.expression as? FunctionCallNode,
                let memberAccess = call.callee as? MemberAccessNode,
-               let receiver = memberAccess.object as? IdentifierNode,
                isMutatingMethod(memberAccess.member) {
                 // Compile the method call
                 compileExpression(exprStmt.expression)
                 // Store the result back to the receiver variable
-                if let local = scopeTracker.resolve(receiver.name) {
-                    Instruction.storeLocal(local.slot, into: &chunk)
+                if let receiver = memberAccess.object as? IdentifierNode {
+                    if let local = scopeTracker.resolve(receiver.name) {
+                        Instruction.storeLocal(local.slot, into: &chunk)
+                    } else {
+                        let nameIndex = chunk.constantPool.addString(receiver.name)
+                        Instruction.storeGlobal(nameIndex, into: &chunk)
+                    }
+                } else if let propAccess = memberAccess.object as? MemberAccessNode {
+                    // Chained: self.observers.append(name)
+                    // Store back to self.property
+                    compileExpression(propAccess.object) // push self
+                    let nameIndex = chunk.constantPool.addPropertyName(propAccess.member)
+                    Instruction.setProperty(nameIndex, into: &chunk)
                 } else {
-                    let nameIndex = chunk.constantPool.addString(receiver.name)
-                    Instruction.storeGlobal(nameIndex, into: &chunk)
+                    chunk.write(.pop)
                 }
             } else {
                 compileExpression(exprStmt.expression)
