@@ -774,7 +774,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
                         Instruction.storeLocal(slot, into: &chunk)
                     }
 
-                    chunk.write(.pop) // Pop the subject
+                    // Don't pop subject — it's slot 0 (__switch_subject)
+                    // The scope pop will clean up all locals including bindings
                     compileBlock(switchCase.body)
                     let removed = scopeTracker.popScope()
                     for _ in removed { chunk.write(.pop) }
