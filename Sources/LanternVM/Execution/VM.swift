@@ -202,9 +202,10 @@ public final class VM: @unchecked Sendable {
             environment.setGlobal(name, value: value); ip += 3
         case .loadCapture:
             guard let idx = readU16(at: ip + 1), let caps = callStack.last?.captures, Int(idx) < caps.count else { throw decodeError() }
-            try stack.push(caps[Int(idx)]); ip += 3
+            try stack.push(caps[Int(idx)].value); ip += 3
         case .storeCapture:
-            _ = readU16(at: ip + 1); _ = stack.pop(); ip += 3
+            guard let idx = readU16(at: ip + 1), let caps = callStack.last?.captures, Int(idx) < caps.count else { throw decodeError() }
+            caps[Int(idx)].value = stack.pop(); ip += 3
 
         // Jumps
         case .jump:
@@ -231,8 +232,9 @@ public final class VM: @unchecked Sendable {
         case .closure:
             guard let fi = readU16(at: ip + 1), let cc = readU8(at: ip + 3),
                   let fn = program.constantPool.function(at: fi) else { throw decodeError() }
-            var caps: [Value] = []; for _ in 0..<cc { caps.append(stack.pop()) }
-            try stack.push(.closure(ClosureRef(function: fn, captures: caps))); ip += 4
+            var cells: [CaptureCell] = []
+            for _ in 0..<cc { cells.append(CaptureCell(stack.pop())) }
+            try stack.push(.closure(ClosureRef(function: fn, captures: cells))); ip += 4
 
         // Properties
         case .getProperty:

@@ -3,9 +3,9 @@ public struct CallFrame: Sendable {
     public let function: FunctionRef
     public var ip: Int
     public let basePointer: Int
-    public let captures: [Value]?
+    public let captures: [CaptureCell]?
 
-    public init(function: FunctionRef, ip: Int, basePointer: Int, captures: [Value]? = nil) {
+    public init(function: FunctionRef, ip: Int, basePointer: Int, captures: [CaptureCell]? = nil) {
         self.function = function; self.ip = ip
         self.basePointer = basePointer; self.captures = captures
     }

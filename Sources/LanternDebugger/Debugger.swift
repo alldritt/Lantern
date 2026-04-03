@@ -199,11 +199,11 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
         let frame = vmCallStack[frameIndex]
         guard let caps = frame.captures else { return [] }
 
-        return caps.enumerated().map { index, value in
+        return caps.enumerated().map { index, cell in
             VariableInfo(
                 name: "capture_\(index)",
-                value: value,
-                typeName: value.typeName,
+                value: cell.value,
+                typeName: cell.value.typeName,
                 isMutable: false,
                 scopeDepth: 0
             )

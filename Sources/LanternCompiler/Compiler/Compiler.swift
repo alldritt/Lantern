@@ -1837,12 +1837,15 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 compileExpression(assign.value)
                 if let local = scopeTracker.resolve(ident.name) {
                     if !local.isMutable && local.isInitialized {
-                        // Let was declared with an initializer — true reassignment is an error
                         diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
                     }
-                    // Deferred let init (isInitialized=false) — allow assignment without error
                     chunk.write(.dup)
                     Instruction.storeLocal(local.slot, into: &chunk)
+                } else if let captureIdx = capturedNames.firstIndex(of: ident.name) {
+                    // Assignment to a captured variable — emit STORE_CAPTURE
+                    chunk.write(.dup)
+                    chunk.write(.storeCapture)
+                    chunk.writeU16(UInt16(captureIdx))
                 } else {
                     // Global variable
                     // Check global immutability

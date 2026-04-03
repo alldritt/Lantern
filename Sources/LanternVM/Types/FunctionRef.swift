@@ -93,12 +93,19 @@ public struct ExceptionHandler: Sendable {
     }
 }
 
+/// A heap-allocated cell for mutable closure captures.
+/// Both the enclosing scope and the closure share the same cell.
+public final class CaptureCell: @unchecked Sendable {
+    public var value: Value
+    public init(_ value: Value) { self.value = value }
+}
+
 /// A compiled closure: function + captured values.
 public struct ClosureRef: Sendable {
     public let function: FunctionRef
-    public let captures: [Value]
+    public let captures: [CaptureCell]
 
-    public init(function: FunctionRef, captures: [Value] = []) {
+    public init(function: FunctionRef, captures: [CaptureCell] = []) {
         self.function = function
         self.captures = captures
     }
