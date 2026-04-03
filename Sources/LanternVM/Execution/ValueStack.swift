@@ -45,6 +45,16 @@ public struct ValueStack: Sendable {
         }
     }
 
+    public func peekOptional() -> Value? {
+        guard top > 0 else { return nil }
+        return storage[top - 1]
+    }
+
+    public mutating func store(at index: Int, value: Value) {
+        guard index >= 0 && index < storage.count else { return }
+        storage[index] = value
+    }
+
     public var isEmpty: Bool { top == 0 }
     public var count: Int { top }
     public mutating func reset() { top = 0 }

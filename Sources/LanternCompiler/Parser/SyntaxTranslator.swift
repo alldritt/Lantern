@@ -705,7 +705,7 @@ final class SyntaxTranslator: SyntaxVisitor {
         for segment in expr.segments {
             switch segment {
             case .stringSegment(let seg):
-                let text = seg.content.text
+                let text = processEscapeSequences(seg.content.text)
                 if !text.isEmpty {
                     segments.append(StringLiteralNode(value: text, location: self.location(of: seg)))
                 }
@@ -725,6 +725,33 @@ final class SyntaxTranslator: SyntaxVisitor {
         // Plain string
         let value = segments.compactMap { ($0 as? StringLiteralNode)?.value }.joined()
         return StringLiteralNode(value: value, location: loc)
+    }
+
+    private func processEscapeSequences(_ text: String) -> String {
+        var result = ""
+        var iter = text.makeIterator()
+        while let ch = iter.next() {
+            if ch == "\\" {
+                if let next = iter.next() {
+                    switch next {
+                    case "n": result.append("\n")
+                    case "t": result.append("\t")
+                    case "r": result.append("\r")
+                    case "\\": result.append("\\")
+                    case "\"": result.append("\"")
+                    case "0": result.append("\0")
+                    default:
+                        result.append("\\")
+                        result.append(next)
+                    }
+                } else {
+                    result.append("\\")
+                }
+            } else {
+                result.append(ch)
+            }
+        }
+        return result
     }
 
     private func translateMemberAccess(_ expr: MemberAccessExprSyntax) -> ExpressionNode {

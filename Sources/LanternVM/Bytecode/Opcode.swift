@@ -83,6 +83,8 @@ public enum Opcode: UInt8, Sendable, CaseIterable {
     case throw_         = 0x78
     case deferPush      = 0x79  // u16 bytecode offset
     case deferPop       = 0x7A
+    case pushHandler    = 0x7B  // i16 offset to catch block
+    case popHandler     = 0x7C
 
     // MARK: SwiftUI State
     case stateInit      = 0x80  // u16 name index
@@ -113,7 +115,7 @@ extension Opcode {
              .return_, .returnVoid,
              .getIndex, .setIndex,
              .wrapOptional, .unwrapOptional, .nilCoalesce,
-             .throw_, .deferPop,
+             .throw_, .deferPop, .popHandler,
              .viewCollect,
              .breakpoint, .halt:
             return 1
@@ -130,7 +132,7 @@ extension Opcode {
              .getProperty, .setProperty,
              .optionalChain,
              .makeArray, .makeDict,
-             .deferPush,
+             .deferPush, .pushHandler,
              .stateInit, .stateGet, .stateSet, .bindingCreate, .publishSet:
             return 3
 

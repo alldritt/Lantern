@@ -56,4 +56,7 @@ public enum Instruction {
     public static func construct(_ typeIndex: UInt16, argCount: UInt8, into chunk: inout Chunk) {
         chunk.write(.construct); chunk.writeU16(typeIndex); chunk.write(argCount)
     }
+    public static func pushHandler(into chunk: inout Chunk) -> Int {
+        chunk.write(.pushHandler); let p = chunk.count; chunk.writeI16(0); return p
+    }
 }

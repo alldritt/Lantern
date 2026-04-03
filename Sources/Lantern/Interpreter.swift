@@ -165,6 +165,7 @@ public final class Interpreter {
         _debugger.load(program)
         registerBuiltins()
         registerEnumCases(from: program)
+        if let limit = maxExecutionSteps { vm.executionLimit = limit }
         vm.run()
 
         switch vm.state {

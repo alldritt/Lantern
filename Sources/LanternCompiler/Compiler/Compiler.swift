@@ -15,6 +15,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private var breakTargets: [Int] = []
     private var continueTargets: [Int] = []
     private var loopDepth = 0
+    private var compilingMethodOfType: String? = nil
 
     private var currentFileName: String = "<input>"
     private var sourceText: String = ""
@@ -112,6 +113,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 symbolTable.register(classDecl.name, kind: .type(.class), location: classDecl.location)
             } else if let enumDecl = stmt as? EnumDeclarationNode {
                 symbolTable.register(enumDecl.name, kind: .type(.enum), location: enumDecl.location)
+                for enumCase in enumDecl.cases {
+                    symbolTable.register(enumCase.name, kind: .enumCase(typeName: enumDecl.name), location: enumDecl.location)
+                }
             } else if let varDecl = stmt as? VariableDeclarationNode {
                 symbolTable.register(varDecl.name, kind: .global(isMutable: varDecl.isMutable), location: varDecl.location)
             }
@@ -424,8 +428,28 @@ public final class BytecodeCompiler: @unchecked Sendable {
         Instruction.loadLocal(arraySlot, into: &chunk)
         Instruction.loadLocal(indexSlot, into: &chunk)
         chunk.write(.getIndex)
-        let varSlot = scopeTracker.declare(name: stmt.variableName, isMutable: false)
-        Instruction.storeLocal(varSlot, into: &chunk)
+
+        // Check for tuple destructuring pattern like (index, value)
+        let varName = stmt.variableName.trimmingCharacters(in: .whitespaces)
+        if varName.hasPrefix("(") && varName.hasSuffix(")") {
+            // Tuple destructuring: "(a, b)" -> extract elements
+            let inner = String(varName.dropFirst().dropLast())
+            let parts = inner.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+            let tupleSlot = scopeTracker.declare(name: "__tuple", isMutable: false)
+            Instruction.storeLocal(tupleSlot, into: &chunk)
+            for (i, part) in parts.enumerated() {
+                if part != "_" {
+                    Instruction.loadLocal(tupleSlot, into: &chunk)
+                    Instruction.constInt(i, into: &chunk)
+                    chunk.write(.getIndex)
+                    let partSlot = scopeTracker.declare(name: part, isMutable: false)
+                    Instruction.storeLocal(partSlot, into: &chunk)
+                }
+            }
+        } else {
+            let varSlot = scopeTracker.declare(name: stmt.variableName, isMutable: false)
+            Instruction.storeLocal(varSlot, into: &chunk)
+        }
 
         loopDepth += 1
         let oldBreakTargets = breakTargets
@@ -498,16 +522,68 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
     private func compileDoCatchStatement(_ stmt: DoCatchStatementNode) {
         emitLocation(stmt.location)
-        // Simplified: compile body, jump over catch if no error
+
+        // Push error handler — offset will be patched to point to catch block
+        let handlerPatch = Instruction.pushHandler(into: &chunk)
+
+        // Compile do body
         compileBlock(stmt.body)
+
+        // No error: pop handler and jump past catch blocks
+        chunk.write(.popHandler)
         let jumpEnd = Instruction.jump(into: &chunk)
+
+        // Patch handler to jump here (start of catch blocks)
+        Instruction.patchJump(at: handlerPatch, in: &chunk)
+
+        // The thrown error value is on the stack at this point
+        // Compile catch clauses with pattern matching
+        var catchEndJumps: [Int] = []
 
         for clause in stmt.catchClauses {
             if let pattern = clause.pattern {
-                let slot = scopeTracker.declare(name: pattern, isMutable: false)
+                // Specific catch pattern — try to match against the error
+                chunk.write(.dup) // dup error for comparison
+                // Try to compile the pattern as an expression (e.g., enum case reference)
+                if let patternExpr = parsePatternAsExpression(pattern) {
+                    compileExpression(patternExpr)
+                } else {
+                    Instruction.constString(pattern, into: &chunk)
+                }
+                chunk.write(.eq)
+                let skipCatch = Instruction.jumpIfFalse(into: &chunk)
+
+                // Match: pop error, execute catch body, jump to end
+                scopeTracker.pushScope()
+                let slot = scopeTracker.declare(name: "error", isMutable: false)
+                chunk.write(.dup)
                 Instruction.storeLocal(slot, into: &chunk)
+                chunk.write(.pop) // pop the error from main stack
+                compileBlock(clause.body)
+                _ = scopeTracker.popScope()
+                let endJump = Instruction.jump(into: &chunk)
+                catchEndJumps.append(endJump)
+
+                Instruction.patchJump(at: skipCatch, in: &chunk)
+            } else {
+                // catch-all: always matches — pop error, execute body
+                scopeTracker.pushScope()
+                let slot = scopeTracker.declare(name: "error", isMutable: false)
+                chunk.write(.dup)
+                Instruction.storeLocal(slot, into: &chunk)
+                chunk.write(.pop) // pop error from main stack
+                compileBlock(clause.body)
+                _ = scopeTracker.popScope()
+                let endJump = Instruction.jump(into: &chunk)
+                catchEndJumps.append(endJump)
             }
-            compileBlock(clause.body)
+        }
+
+        // If no catch matched, pop the error
+        chunk.write(.pop)
+
+        for ej in catchEndJumps {
+            Instruction.patchJump(at: ej, in: &chunk)
         }
 
         Instruction.patchJump(at: jumpEnd, in: &chunk)
@@ -545,7 +621,16 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     chunk.write(.dup)
                     switch pattern {
                     case .expression(let expr):
-                        compileExpression(expr)
+                        // Handle implicit member access patterns like `.north` in switch cases
+                        if let member = expr as? MemberAccessNode,
+                           member.object is SelfNode,
+                           case .enumCase(let typeName) = symbolTable.lookup(member.member)?.kind {
+                            let qualifiedName = "\(typeName).\(member.member)"
+                            let nameIndex = chunk.constantPool.addString(qualifiedName)
+                            Instruction.loadGlobal(nameIndex, into: &chunk)
+                        } else {
+                            compileExpression(expr)
+                        }
                     case .identifier(let name):
                         Instruction.constString(name, into: &chunk)
                     case .wildcard:
@@ -596,6 +681,23 @@ public final class BytecodeCompiler: @unchecked Sendable {
         scopeTracker.pushScope()
         for param in decl.parameters {
             scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
+        }
+
+        // Emit default value handling for parameters with defaults
+        for (i, param) in decl.parameters.enumerated() {
+            if let defaultExpr = param.defaultValue {
+                // If the parameter is nil (not provided), use the default value
+                Instruction.loadLocal(UInt16(i), into: &chunk)
+                chunk.write(.dup)
+                let jumpHasValue = Instruction.jumpIfTrue(into: &chunk)
+                chunk.write(.pop) // pop the nil
+                compileExpression(defaultExpr) // push default value
+                Instruction.storeLocal(UInt16(i), into: &chunk)
+                let jumpEnd = Instruction.jump(into: &chunk)
+                Instruction.patchJump(at: jumpHasValue, in: &chunk)
+                chunk.write(.pop) // pop the dup'd value (it was non-nil)
+                Instruction.patchJump(at: jumpEnd, in: &chunk)
+            }
         }
 
         for stmt in decl.body.statements {
@@ -687,8 +789,16 @@ public final class BytecodeCompiler: @unchecked Sendable {
             sourceRange: (start: decl.location, end: decl.location)
         ))
 
-        // Generate memberwise init
-        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), kind: .struct)
+        // Generate memberwise init — collect default values from member declarations
+        var defaults: [ExpressionNode?] = []
+        for member in decl.members {
+            if let prop = member as? VariableDeclarationNode {
+                defaults.append(prop.initializer)
+            } else if let prop = member as? PropertyNode {
+                defaults.append(prop.initializer)
+            }
+        }
+        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: defaults, kind: .struct)
     }
 
     private func compileClassDeclaration(_ decl: ClassDeclarationNode) {
@@ -728,8 +838,16 @@ public final class BytecodeCompiler: @unchecked Sendable {
             sourceRange: (start: decl.location, end: decl.location)
         ))
 
-        // Generate memberwise init
-        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), kind: .class)
+        // Generate memberwise init — collect default values
+        var classDefaults: [ExpressionNode?] = []
+        for member in decl.members {
+            if let prop = member as? VariableDeclarationNode {
+                classDefaults.append(prop.initializer)
+            } else if let prop = member as? PropertyNode {
+                classDefaults.append(prop.initializer)
+            }
+        }
+        emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: classDefaults, kind: .class)
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter
@@ -749,15 +867,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
             scopeTracker.declare(name: param.internalName, isMutable: false, typeAnnotation: param.typeAnnotation)
         }
 
+        let savedCompilingMethod = compilingMethodOfType
+        compilingMethodOfType = typeName
+
         for stmt in decl.body.statements {
             compileStatement(stmt)
         }
+
+        compilingMethodOfType = nil
 
         if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {
             chunk.write(.returnVoid)
         }
 
         _ = scopeTracker.popScope()
+        compilingMethodOfType = savedCompilingMethod
         scopeTracker.restoreSlotState(savedSlots)
 
         let bodyEnd = chunk.count
@@ -784,7 +908,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     /// Generate a memberwise initializer stored as a global
-    private func emitMemberwiseInit(name: String, typeIndex: UInt16, propNames: [String], kind: TypeKind) {
+    private func emitMemberwiseInit(name: String, typeIndex: UInt16, propNames: [String], defaults: [ExpressionNode?] = [], kind: TypeKind) {
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
 
@@ -797,6 +921,14 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         for (i, _) in propNames.enumerated() {
             Instruction.loadLocal(UInt16(i), into: &chunk)
+            // If property has a default value, use nil-coalescing: param ?? default
+            if i < defaults.count, let defaultExpr = defaults[i] {
+                chunk.write(.dup)
+                let jumpHasValue = Instruction.jumpIfTrue(into: &chunk)
+                chunk.write(.pop) // pop the nil
+                compileExpression(defaultExpr) // push the default value
+                Instruction.patchJump(at: jumpHasValue, in: &chunk)
+            }
         }
         Instruction.construct(typeIndex, argCount: UInt8(propNames.count), into: &chunk)
         chunk.write(.return_)
@@ -854,8 +986,13 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     private func compileExtension(_ ext: ExtensionNode) {
+        let typeName = ext.typeName
         for member in ext.members {
-            compileStatement(member)
+            if let funcDecl = member as? FunctionDeclarationNode {
+                compileTypeMethod(funcDecl, typeName: typeName)
+            } else {
+                compileStatement(member)
+            }
         }
     }
 
@@ -888,6 +1025,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
                symbolTable.lookup(ident.name)?.isType == true {
                 // Qualified name: "TypeName.member"
                 let qualifiedName = "\(ident.name).\(member.member)"
+                let nameIndex = chunk.constantPool.addString(qualifiedName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+            } else if member.object is SelfNode,
+                      case .enumCase(let typeName) = symbolTable.lookup(member.member)?.kind {
+                // Implicit member access like `.north` resolving to enum case
+                let qualifiedName = "\(typeName).\(member.member)"
                 let nameIndex = chunk.constantPool.addString(qualifiedName)
                 Instruction.loadGlobal(nameIndex, into: &chunk)
             } else {
@@ -942,9 +1085,20 @@ public final class BytecodeCompiler: @unchecked Sendable {
             chunk.writeI16(0)
             Instruction.patchJump(at: jumpOffset, in: &chunk)
         } else if let tryExpr = expr as? TryExpressionNode {
-            compileExpression(tryExpr.expression)
             if tryExpr.kind == .tryOptional {
+                // try? — catch errors and return nil
+                let handlerPatch = Instruction.pushHandler(into: &chunk)
+                compileExpression(tryExpr.expression)
                 chunk.write(.wrapOptional)
+                chunk.write(.popHandler)
+                let jumpEnd = Instruction.jump(into: &chunk)
+                // Handler: error occurred — push nil
+                Instruction.patchJump(at: handlerPatch, in: &chunk)
+                chunk.write(.pop) // pop error
+                chunk.write(.constNil)
+                Instruction.patchJump(at: jumpEnd, in: &chunk)
+            } else {
+                compileExpression(tryExpr.expression)
             }
         } else if let awaitExpr = expr as? AwaitExpressionNode {
             compileExpression(awaitExpr.expression)
@@ -968,6 +1122,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // Check locals first (inner to outer scope)
         if let local = scopeTracker.resolve(ident.name) {
             Instruction.loadLocal(local.slot, into: &chunk)
+        } else if compilingMethodOfType != nil && symbolTable.lookup(ident.name)?.isType != true {
+            // Inside a type method body — unresolved identifiers are implicit self.property
+            Instruction.loadLocal(0, into: &chunk) // self
+            let nameIndex = chunk.constantPool.addPropertyName(ident.name)
+            Instruction.getProperty(nameIndex, into: &chunk)
         } else {
             // Global or unresolved — load from environment
             let nameIndex = chunk.constantPool.addString(ident.name)
@@ -1035,6 +1194,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
         case .greaterThan: chunk.write(.gt)
         case .lessThanOrEqual: chunk.write(.lte)
         case .greaterThanOrEqual: chunk.write(.gte)
+        case .identityEqual: chunk.write(.eq) // For InstanceRef (class), eq checks identity
+        case .identityNotEqual: chunk.write(.neq)
         default:
             diagnosticEngine.warning("Operator \(binary.op.rawValue) not fully implemented", at: binary.location)
             chunk.write(.add)
@@ -1122,33 +1283,80 @@ public final class BytecodeCompiler: @unchecked Sendable {
     }
 
     private func compileAssignment(_ assign: AssignmentNode) {
-        compileExpression(assign.value)
-
         if let ident = assign.target as? IdentifierNode {
-            if let local = scopeTracker.resolve(ident.name) {
-                if !local.isMutable {
-                    diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
-                }
-                chunk.write(.dup)
-                Instruction.storeLocal(local.slot, into: &chunk)
+            // Check if this is an implicit self.property assignment inside a type method
+            let isImplicitSelfProperty = compilingMethodOfType != nil
+                && scopeTracker.resolve(ident.name) == nil
+                && symbolTable.lookup(ident.name)?.isType != true
+                && symbolTable.lookup(ident.name)?.kind == nil
+
+            if isImplicitSelfProperty {
+                // setProperty expects stack: [self, value] — pops val (top), then inst
+                Instruction.loadLocal(0, into: &chunk) // self
+                compileExpression(assign.value)
+                let nameIndex = chunk.constantPool.addPropertyName(ident.name)
+                Instruction.setProperty(nameIndex, into: &chunk)
+                chunk.write(.constNil) // assignment result for pop
             } else {
-                // Global variable
-                chunk.write(.dup)
-                let nameIndex = chunk.constantPool.addString(ident.name)
-                Instruction.storeGlobal(nameIndex, into: &chunk)
+                compileExpression(assign.value)
+                if let local = scopeTracker.resolve(ident.name) {
+                    if !local.isMutable {
+                        diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
+                    }
+                    chunk.write(.dup)
+                    Instruction.storeLocal(local.slot, into: &chunk)
+                } else {
+                    // Global variable
+                    chunk.write(.dup)
+                    let nameIndex = chunk.constantPool.addString(ident.name)
+                    Instruction.storeGlobal(nameIndex, into: &chunk)
+                }
             }
         } else if let member = assign.target as? MemberAccessNode {
+            // setProperty expects stack: [object, value] — pops val (top), then inst
             compileExpression(member.object)
-            chunk.write(.dup) // Keep the object and value around
+            compileExpression(assign.value)
             let nameIndex = chunk.constantPool.addPropertyName(member.member)
             Instruction.setProperty(nameIndex, into: &chunk)
+            chunk.write(.constNil) // assignment result for pop
         } else if let sub = assign.target as? SubscriptNode {
+            // setIndex expects stack: [collection, index, value] — pops val, idx, col
             compileExpression(sub.object)
             compileExpression(sub.index)
+            compileExpression(assign.value)
             chunk.write(.setIndex)
+            // setIndex pushes the modified collection back — store it back to the variable
+            if let objIdent = sub.object as? IdentifierNode {
+                if let local = scopeTracker.resolve(objIdent.name) {
+                    Instruction.storeLocal(local.slot, into: &chunk)
+                } else {
+                    let nameIndex = chunk.constantPool.addString(objIdent.name)
+                    Instruction.storeGlobal(nameIndex, into: &chunk)
+                }
+            }
+            chunk.write(.constNil) // assignment result for pop
         } else {
             diagnosticEngine.error("Invalid assignment target", at: assign.location)
         }
+    }
+
+    /// Parse a catch pattern string as an expression node.
+    /// E.g., "ValidationError.tooSmall" → MemberAccessNode → loadGlobal("ValidationError.tooSmall")
+    private func parsePatternAsExpression(_ pattern: String) -> ExpressionNode? {
+        let parts = pattern.split(separator: ".")
+        if parts.count == 2 {
+            let typeName = String(parts[0])
+            let caseName = String(parts[1])
+            // Check if this is a known type
+            if symbolTable.lookup(typeName)?.isType == true {
+                return MemberAccessNode(
+                    object: IdentifierNode(name: typeName, location: .unknown),
+                    member: caseName,
+                    location: .unknown
+                )
+            }
+        }
+        return nil
     }
 
     // MARK: - Source Map

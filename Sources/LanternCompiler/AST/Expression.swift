@@ -163,6 +163,8 @@ public enum BinaryOperator: String, Sendable {
     case bitwiseAnd = "&"
     case bitwiseOr = "|"
     case bitwiseXor = "^"
+    case identityEqual = "==="
+    case identityNotEqual = "!=="
 }
 
 public enum UnaryOperator: String, Sendable {

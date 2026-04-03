@@ -16,7 +16,11 @@ public final class VM: @unchecked Sendable {
     private var ip: Int = 0
     private var executionCount: Int = 0
     private let maxCallDepth: Int
-    private let executionLimit: Int
+    public var executionLimit: Int
+
+    /// Stack of error handlers for do-catch blocks.
+    /// Each entry: (catchIP: bytecode offset to jump to, stackDepth: stack count at pushHandler, callDepth: call stack count)
+    private var errorHandlers: [(catchIP: Int, stackDepth: Int, callDepth: Int)] = []
 
     // MARK: - Debug hooks
 
@@ -43,7 +47,7 @@ public final class VM: @unchecked Sendable {
 
     public func load(_ program: CompiledProgram) {
         self.program = program; ip = 0; stack.reset()
-        callStack.removeAll(); executionCount = 0; state = .ready
+        callStack.removeAll(); errorHandlers.removeAll(); executionCount = 0; state = .ready
     }
 
     // MARK: - Execution Control
@@ -240,8 +244,67 @@ public final class VM: @unchecked Sendable {
         case .callMethod:
             guard let ni = readU16(at: ip + 1), let argc = readU8(at: ip + 3),
                   let methodName = program.constantPool.methodName(at: ni) else { throw decodeError() }
+            let mutatingMethods: Set<String> = ["append", "remove", "removeLast", "removeAll", "insert", "removeValue", "removeFirst", "reverse", "sort"]
+            let isMutating = mutatingMethods.contains(methodName)
             let handled = try callMethod(methodName, argCount: Int(argc))
-            if !handled { ip += 4 } // if callMethod dispatched to a function, IP was already set
+            if !handled {
+                // For mutating methods on value types, store the result back to the source variable
+                if isMutating, let result = stack.peekOptional() {
+                    if case .array(_) = result, let _ = result as Value? {
+                        // Look backward in bytecode to find the loadLocal/loadGlobal that loaded the receiver
+                        let callMethodSize = 4 // opcode + u16 + u8
+                        var scanIP = ip
+                        // Skip backward past argument-loading instructions
+                        // Each arg was loaded before the receiver + args on stack
+                        // The receiver was loaded before all args
+                        // For arg count 0, receiver is right before callMethod
+                        // For arg count N, need to skip N arg-loading instructions
+                        // Simple approach: scan back to find last loadLocal/loadGlobal before the args
+                        var argsToSkip = Int(argc)
+                        var scan = scanIP - 1
+                        while scan >= 0 && argsToSkip > 0 {
+                            // Find instruction start
+                            if let op = Opcode(rawValue: program.bytecode[scan]) {
+                                scan -= op.instructionSize
+                            } else {
+                                scan -= 1
+                            }
+                            argsToSkip -= 1
+                        }
+                        // Now scan should point to the instruction that loaded the receiver
+                        // Actually, let me try a simpler approach: scan backward from ip
+                        let receiverLoadIP = findReceiverLoadIP(at: ip, argCount: Int(argc))
+                        if let rip = receiverLoadIP {
+                            if program.bytecode[rip] == Opcode.loadLocal.rawValue {
+                                let slot = UInt16(program.bytecode[rip + 1]) | (UInt16(program.bytecode[rip + 2]) << 8)
+                                let base = callStack.last?.basePointer ?? 0
+                                stack.store(at: base + Int(slot), value: result)
+                            } else if program.bytecode[rip] == Opcode.loadGlobal.rawValue {
+                                let nameIdx = UInt16(program.bytecode[rip + 1]) | (UInt16(program.bytecode[rip + 2]) << 8)
+                                if let name = program.constantPool.string(at: nameIdx) {
+                                    environment.setGlobal(name, value: result)
+                                }
+                            }
+                        }
+                    }
+                    if case .dictionary(_) = result {
+                        let receiverLoadIP = findReceiverLoadIP(at: ip, argCount: Int(argc))
+                        if let rip = receiverLoadIP {
+                            if program.bytecode[rip] == Opcode.loadLocal.rawValue {
+                                let slot = UInt16(program.bytecode[rip + 1]) | (UInt16(program.bytecode[rip + 2]) << 8)
+                                let base = callStack.last?.basePointer ?? 0
+                                stack.store(at: base + Int(slot), value: result)
+                            } else if program.bytecode[rip] == Opcode.loadGlobal.rawValue {
+                                let nameIdx = UInt16(program.bytecode[rip + 1]) | (UInt16(program.bytecode[rip + 2]) << 8)
+                                if let name = program.constantPool.string(at: nameIdx) {
+                                    environment.setGlobal(name, value: result)
+                                }
+                            }
+                        }
+                    }
+                }
+                ip += 4
+            }
 
         // Host bridge
         case .callHost:
@@ -256,8 +319,21 @@ public final class VM: @unchecked Sendable {
             if let typeInfo = program.typeTable.first(where: { $0.name == typeName }) {
                 var values: [Value] = []
                 for _ in 0..<argc { values.insert(stack.pop(), at: 0) }
-                for (i, prop) in typeInfo.properties.enumerated() where i < values.count {
-                    props.append((name: prop.name, value: values[i]))
+                for (i, prop) in typeInfo.properties.enumerated() {
+                    if i < values.count {
+                        props.append((name: prop.name, value: values[i]))
+                    } else {
+                        // Default value for missing properties based on type annotation
+                        let defaultVal: Value
+                        switch prop.typeAnnotation {
+                        case "Int": defaultVal = .int(0)
+                        case "Double", "Float": defaultVal = .double(0.0)
+                        case "String": defaultVal = .string("")
+                        case "Bool": defaultVal = .bool(false)
+                        default: defaultVal = .nil_
+                        }
+                        props.append((name: prop.name, value: defaultVal))
+                    }
                 }
             } else {
                 // Fallback: unnamed properties
@@ -319,7 +395,25 @@ public final class VM: @unchecked Sendable {
         // Error handling
         case .throw_:
             let err = stack.pop()
-            throw InterpreterError.thrownError(err, at: loc())
+            if let handler = errorHandlers.popLast() {
+                // Unwind stack to the handler's depth
+                while stack.count > handler.stackDepth { _ = stack.pop() }
+                // Unwind call stack
+                while callStack.count > handler.callDepth { callStack.removeLast() }
+                // Push the error value for catch blocks to use
+                try stack.push(err)
+                ip = handler.catchIP
+            } else {
+                throw InterpreterError.thrownError(err, at: loc())
+            }
+        case .pushHandler:
+            guard let off = readI16(at: ip + 1) else { throw decodeError() }
+            let catchIP = ip + 3 + Int(off)
+            errorHandlers.append((catchIP: catchIP, stackDepth: stack.count, callDepth: callStack.count))
+            ip += 3
+        case .popHandler:
+            _ = errorHandlers.popLast()
+            ip += 1
         case .deferPush:
             guard let _ = readU16(at: ip + 1) else { throw decodeError() }
             ip += 3 // defer registration — stub
@@ -552,7 +646,17 @@ public final class VM: @unchecked Sendable {
                 result = .array(arr)
             case "contains":
                 guard let elem = args.first else { throw InterpreterError.wrongArgumentCount(expected: 1, got: 0, at: loc()) }
-                result = .bool(arr.contains(elem))
+                if case .closure(_) = elem {
+                    // contains(where:) with predicate
+                    var found = false
+                    for item in arr {
+                        let res = try invokeValue(elem, args: [item])
+                        if case .bool(true) = res { found = true; break }
+                    }
+                    result = .bool(found)
+                } else {
+                    result = .bool(arr.contains(elem))
+                }
             case "reversed":
                 result = .array(arr.reversed())
             case "removeLast":
@@ -565,14 +669,30 @@ public final class VM: @unchecked Sendable {
                 arr.remove(at: idx)
                 result = .array(arr)
             case "sorted":
-                // Simple sort for comparable value types
-                let sorted = arr.sorted { a, b in
-                    if let la = a.intValue, let lb = b.intValue { return la < lb }
-                    if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
-                    if case .string(let la) = a, case .string(let lb) = b { return la < lb }
-                    return false
+                if let comparator = args.first {
+                    // Sort with custom comparator closure
+                    var mutableArr = arr
+                    // Simple bubble sort to use the comparator
+                    // comparator(a, b) returns true if a should come before b
+                    for i in 0..<mutableArr.count {
+                        for j in 0..<(mutableArr.count - 1 - i) {
+                            let cmpResult = try invokeValue(comparator, args: [mutableArr[j+1], mutableArr[j]])
+                            if case .bool(let shouldSwap) = cmpResult, shouldSwap {
+                                mutableArr.swapAt(j, j+1)
+                            }
+                        }
+                    }
+                    result = .array(mutableArr)
+                } else {
+                    // Simple sort for comparable value types
+                    let sorted = arr.sorted { a, b in
+                        if let la = a.intValue, let lb = b.intValue { return la < lb }
+                        if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
+                        if case .string(let la) = a, case .string(let lb) = b { return la < lb }
+                        return false
+                    }
+                    result = .array(sorted)
                 }
-                result = .array(sorted)
             case "joined":
                 let sep = (args.first?.stringValue) ?? ""
                 result = .string(arr.compactMap { $0.stringValue }.joined(separator: sep))
@@ -607,6 +727,101 @@ public final class VM: @unchecked Sendable {
             case "enumerated":
                 // Returns array of (index, value) pairs as arrays
                 result = .array(arr.enumerated().map { .array([.int($0.offset), $0.element]) })
+            case "allSatisfy":
+                guard let predicate = args.first else { result = .bool(true); break }
+                var allMatch = true
+                for item in arr {
+                    let res = try invokeValue(predicate, args: [item])
+                    if case .bool(false) = res { allMatch = false; break }
+                }
+                result = .bool(allMatch)
+            case "compactMap":
+                guard let transform = args.first else { result = .array(arr); break }
+                var mapped: [Value] = []
+                for item in arr {
+                    let res = try invokeValue(transform, args: [item])
+                    if !res.isNil {
+                        if case .optional(let inner) = res, let v = inner { mapped.append(v) }
+                        else { mapped.append(res) }
+                    }
+                }
+                result = .array(mapped)
+            case "flatMap":
+                guard let transform = args.first else { result = .array(arr); break }
+                var mapped: [Value] = []
+                for item in arr {
+                    let res = try invokeValue(transform, args: [item])
+                    if case .array(let inner) = res { mapped.append(contentsOf: inner) }
+                    else { mapped.append(res) }
+                }
+                result = .array(mapped)
+            case "min":
+                if let comparator = args.first {
+                    var minVal = arr.first ?? .nil_
+                    for item in arr.dropFirst() {
+                        let res = try invokeValue(comparator, args: [item, minVal])
+                        if case .bool(true) = res { minVal = item }
+                    }
+                    result = .optional(minVal)
+                } else {
+                    let sorted = arr.sorted { a, b in
+                        if let la = a.intValue, let lb = b.intValue { return la < lb }
+                        if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
+                        return false
+                    }
+                    result = .optional(sorted.first)
+                }
+            case "max":
+                if let comparator = args.first {
+                    var maxVal = arr.first ?? .nil_
+                    for item in arr.dropFirst() {
+                        let res = try invokeValue(comparator, args: [maxVal, item])
+                        if case .bool(true) = res { maxVal = item }
+                    }
+                    result = .optional(maxVal)
+                } else {
+                    let sorted = arr.sorted { a, b in
+                        if let la = a.intValue, let lb = b.intValue { return la > lb }
+                        if let la = a.doubleValue, let lb = b.doubleValue { return la > lb }
+                        return false
+                    }
+                    result = .optional(sorted.first)
+                }
+            case "first":
+                if let predicate = args.first {
+                    // first(where:) — find first element matching predicate
+                    var found: Value?
+                    for item in arr {
+                        let res = try invokeValue(predicate, args: [item])
+                        if case .bool(true) = res { found = item; break }
+                    }
+                    result = .optional(found)
+                } else {
+                    result = .optional(arr.first)
+                }
+            case "last":
+                if let predicate = args.first {
+                    var found: Value?
+                    for item in arr.reversed() {
+                        let res = try invokeValue(predicate, args: [item])
+                        if case .bool(true) = res { found = item; break }
+                    }
+                    result = .optional(found)
+                } else {
+                    result = .optional(arr.last)
+                }
+            case "dropFirst":
+                let n = args.first?.intValue ?? 1
+                result = .array(Array(arr.dropFirst(n)))
+            case "dropLast":
+                let n = args.first?.intValue ?? 1
+                result = .array(Array(arr.dropLast(n)))
+            case "prefix":
+                let n = args.first?.intValue ?? 0
+                result = .array(Array(arr.prefix(n)))
+            case "suffix":
+                let n = args.first?.intValue ?? 0
+                result = .array(Array(arr.suffix(n)))
             default:
                 throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
             }
@@ -634,6 +849,16 @@ public final class VM: @unchecked Sendable {
             case "trimmingCharacters":
                 result = .string(s.trimmingCharacters(in: .whitespacesAndNewlines))
             default:
+                // Try type-qualified global lookup (extension methods)
+                let qualifiedName = "String.\(name)"
+                if let method = environment.getGlobal(qualifiedName) {
+                    try stack.push(method)
+                    try stack.push(receiver)
+                    for arg in args { try stack.push(arg) }
+                    let retIP = ip + 4
+                    try callFunction(argCount: args.count + 1, returnIP: retIP)
+                    return true
+                }
                 throw InterpreterError.undefinedMethod(name, on: "String", at: loc())
             }
         case .dictionary(var d):
@@ -696,6 +921,20 @@ public final class VM: @unchecked Sendable {
                 let retIP = ip + 4 // return address is past callMethod opcode
                 try callFunction(argCount: args.count + 1, returnIP: retIP) // +1 for self
                 return true // IP handled by callFunction
+            }
+            // Fallback: check protocol/conformance chain for default implementations
+            if let typeInfo = program.typeTable.first(where: { $0.name == receiver.typeName }) {
+                for conformance in typeInfo.conformances {
+                    let protoQualified = "\(conformance).\(name)"
+                    if let method = environment.getGlobal(protoQualified) {
+                        try stack.push(method)
+                        try stack.push(receiver)
+                        for arg in args { try stack.push(arg) }
+                        let retIP = ip + 4
+                        try callFunction(argCount: args.count + 1, returnIP: retIP)
+                        return true
+                    }
+                }
             }
             throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
         }
@@ -788,6 +1027,36 @@ public final class VM: @unchecked Sendable {
     // MARK: - Helpers
 
     private var basePointer: Int { callStack.last?.basePointer ?? 0 }
+
+    /// Walk backward through bytecode from a callMethod instruction to find the loadLocal/loadGlobal
+    /// that loaded the receiver (skipping past argument-loading instructions).
+    private func findReceiverLoadIP(at callMethodIP: Int, argCount: Int) -> Int? {
+        var pos = callMethodIP
+        // Skip backward past argCount worth of instructions
+        var toSkip = argCount
+        while pos > 0 && toSkip >= 0 {
+            // Scan backward to find instruction start
+            // Try each possible instruction size
+            for size in [9, 4, 3, 2, 1] {
+                let candidateIP = pos - size
+                if candidateIP >= 0, let op = Opcode(rawValue: program.bytecode[candidateIP]), op.instructionSize == size {
+                    pos = candidateIP
+                    if toSkip == 0 {
+                        // This is the receiver instruction
+                        if op == .loadLocal || op == .loadGlobal {
+                            return pos
+                        }
+                        return nil
+                    }
+                    toSkip -= 1
+                    break
+                }
+            }
+            if toSkip >= 0 && pos == callMethodIP { break } // couldn't find instruction
+        }
+        return nil
+    }
+
     private func loc() -> SourceLocation? { program?.sourceMap.location(forOffset: ip) }
     private func decodeError() -> InterpreterError { .init(kind: .custom("decode"), message: "Failed to decode operand at \(ip)", location: loc()) }
     private func fail(_ error: InterpreterError) { state = .error(error); delegate?.vm(self, didEncounterError: error) }

@@ -106,9 +106,19 @@ public indirect enum Value: Sendable, CustomStringConvertible {
         case .nil_: return "nil"
         case .optional(.none): return "nil"
         case .optional(.some(let v)): return "Optional(\(v))"
-        case .array(let a): return "[\(a.map(\.description).joined(separator: ", "))]"
+        case .array(let a):
+            let elems = a.map { elem -> String in
+                if case .string(let s) = elem { return "\"\(s)\"" }
+                return elem.description
+            }
+            return "[\(elems.joined(separator: ", "))]"
         case .dictionary(let d):
-            let pairs = d.sorted(by: { $0.key < $1.key }).map { "\($0.key): \($0.value)" }
+            let pairs = d.sorted(by: { $0.key < $1.key }).map { pair -> String in
+                let valStr: String
+                if case .string(let s) = pair.value { valStr = "\"\(s)\"" }
+                else { valStr = pair.value.description }
+                return "\"\(pair.key)\": \(valStr)"
+            }
             return "[\(pairs.joined(separator: ", "))]"
         case .range(let s, let e, let inc): return inc ? "\(s)...\(e)" : "\(s)..<\(e)"
         case .closure(let c): return "(Function \(c.function.name))"
@@ -187,6 +197,10 @@ extension Value: Equatable {
             case (.some(let va), .some(let vb)): return va == vb
             default: return false
             }
+        // nil comparisons with optional
+        case (.nil_, .optional(.none)): return true
+        case (.optional(.none), .nil_): return true
+        case (.instance(let a), .instance(let b)): return a === b
         default: return false
         }
     }
