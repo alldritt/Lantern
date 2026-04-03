@@ -976,8 +976,13 @@ public final class VM: @unchecked Sendable {
             let qualifiedName = "\(lookupTypeName).\(name)"
             if let method = environment.getGlobal(qualifiedName) {
                 let retIP = ip + 4
-                if case .instance = receiver {
-                    // Instance method: pass self as first arg
+                let isInstanceCall: Bool
+                switch receiver {
+                case .instance, .enumCase: isInstanceCall = true
+                default: isInstanceCall = false
+                }
+                if isInstanceCall {
+                    // Instance/enum method: pass self as first arg
                     try stack.push(method)
                     try stack.push(receiver)
                     for arg in args { try stack.push(arg) }
@@ -1047,7 +1052,13 @@ public final class VM: @unchecked Sendable {
         case .enumCase(let ref):
             switch name {
             case "rawValue": return ref.rawValue ?? .nil_
-            default: throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
+            default:
+                // Check for computed property getter on enum type
+                let getterName = "\(ref.typeName).__get_\(name)"
+                if let getter = environment.getGlobal(getterName) {
+                    return try invokeValue(getter, args: [value])
+                }
+                throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
             }
         case .optional(.some(let inner)):
             // Optional chaining: unwrap and access property

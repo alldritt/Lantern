@@ -1173,10 +1173,16 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // We use properties in the TypeDebugInfo to carry case names (for enum kind)
         // The interpreter reads these and creates EnumCaseRef globals
 
-        // Compile methods
+        // Compile methods and computed properties
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
-                compileTypeMethod(funcDecl, typeName: decl.name)
+                if funcDecl.isStatic {
+                    compileStaticMethod(funcDecl, typeName: decl.name)
+                } else {
+                    compileTypeMethod(funcDecl, typeName: decl.name)
+                }
+            } else if let computed = member as? ComputedPropertyNode {
+                compileComputedProperty(computed, typeName: decl.name)
             }
         }
 
