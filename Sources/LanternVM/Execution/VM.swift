@@ -875,6 +875,23 @@ public final class VM: @unchecked Sendable {
             default:
                 throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
             }
+        case .optional(.some(let inner)):
+            // Optional chaining: unwrap and call method
+            try stack.push(inner)
+            for arg in args { try stack.push(arg) }
+            let handled = try callMethod(name, argCount: args.count)
+            // Wrap result in optional
+            if !handled {
+                let methodResult = stack.pop()
+                try stack.push(.optional(methodResult))
+            }
+            return handled
+
+        case .optional(.none), .nil_:
+            // Optional chaining on nil: return nil
+            try stack.push(.nil_)
+            return false
+
         case .range(let start, let end, let inclusive):
             // Convert range to array and dispatch
             let rangeEnd = inclusive ? end : end - 1
@@ -977,6 +994,13 @@ public final class VM: @unchecked Sendable {
         case .instance(let ref):
             if let v = ref.property(name) { return v }
             throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
+        case .optional(.some(let inner)):
+            // Optional chaining: unwrap and access property
+            let result = try getProperty(inner, name: name)
+            return .optional(result)
+        case .optional(.none), .nil_:
+            // Optional chaining on nil: return nil
+            return .nil_
         default:
             throw InterpreterError.undefinedProperty(name, on: value.typeName, at: loc())
         }
