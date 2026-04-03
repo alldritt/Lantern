@@ -888,6 +888,15 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
             emitMemberwiseInit(name: decl.name, typeIndex: typeIndex, propNames: properties.map(\.name), defaults: classDefaults, kind: .class)
         }
+
+        // Compile static stored properties (class)
+        for member in decl.members {
+            if let prop = member as? PropertyNode, prop.isStatic, let initializer = prop.initializer {
+                compileExpression(initializer)
+                let nameIndex = chunk.constantPool.addString("\(decl.name).\(prop.name)")
+                Instruction.storeGlobal(nameIndex, into: &chunk)
+            }
+        }
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter
