@@ -602,6 +602,19 @@ final class SyntaxTranslator: SyntaxVisitor {
                         if patternText == "_" {
                             return .wildcard
                         }
+                        // Check for enum case pattern with bindings: .caseName(let x, let y)
+                        if patternText.hasPrefix("."),
+                           let parenStart = patternText.firstIndex(of: "("),
+                           patternText.contains("let ") {
+                            let caseName = String(patternText[patternText.index(after: patternText.startIndex)..<parenStart])
+                            let argsStr = String(patternText[patternText.index(after: parenStart)..<patternText.index(before: patternText.endIndex)])
+                            let bindings = argsStr.split(separator: ",").map {
+                                $0.trimmingCharacters(in: .whitespaces)
+                                 .replacingOccurrences(of: "let ", with: "")
+                                 .replacingOccurrences(of: "var ", with: "")
+                            }
+                            return .enumCase(caseName: caseName, bindings: bindings)
+                        }
                         // Try to parse as expression
                         if let expr = translateExprFromText(patternText, at: item) {
                             return .expression(expr)

@@ -235,6 +235,7 @@ public enum CasePattern {
     case expression(ExpressionNode)
     case identifier(String)
     case wildcard
+    case enumCase(caseName: String, bindings: [String])
 }
 
 public struct SwitchCase {

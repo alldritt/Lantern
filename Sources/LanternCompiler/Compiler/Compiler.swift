@@ -723,6 +723,15 @@ public final class BytecodeCompiler: @unchecked Sendable {
                         let jump = Instruction.jumpIfTrue(into: &chunk)
                         caseJumps.append(jump)
                         continue
+                    case .enumCase(let caseName, let bindings):
+                        // Compare subject's caseName
+                        let caseNameIdx = chunk.constantPool.addPropertyName("caseName")
+                        Instruction.getProperty(caseNameIdx, into: &chunk) // gets caseName string from dup'd subject
+                        Instruction.constString(caseName, into: &chunk)
+                        chunk.write(.eq)
+                        let jump = Instruction.jumpIfTrue(into: &chunk)
+                        caseJumps.append(jump)
+                        continue // bindings extracted below after match confirmed
                     }
                     chunk.write(.eq)
                     let jump = Instruction.jumpIfTrue(into: &chunk)
@@ -735,8 +744,44 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     Instruction.patchJump(at: cj, in: &chunk)
                 }
 
-                chunk.write(.pop) // Pop the subject
-                compileBlock(switchCase.body)
+                // Extract enum bindings if this is an enumCase pattern
+                let enumBindings = switchCase.patterns.compactMap { p -> (String, [String])? in
+                    if case .enumCase(let cn, let binds) = p { return (cn, binds) }
+                    return nil
+                }.first
+
+                if let (_, bindings) = enumBindings, !bindings.isEmpty {
+                    // Subject is still on stack — save it and extract associated values
+                    scopeTracker.pushScope()
+                    // Save subject to a temp local
+                    let subjectSlot = scopeTracker.declare(name: "__switch_subject", isMutable: false)
+                    chunk.write(.dup)
+                    Instruction.storeLocal(subjectSlot, into: &chunk)
+
+                    // Get the associatedValues array once
+                    let assocIdx = chunk.constantPool.addPropertyName("associatedValues")
+                    Instruction.loadLocal(subjectSlot, into: &chunk)
+                    Instruction.getProperty(assocIdx, into: &chunk)
+                    let arrSlot = scopeTracker.declare(name: "__assoc_values", isMutable: false)
+                    Instruction.storeLocal(arrSlot, into: &chunk)
+
+                    // Extract each binding from the array
+                    for (i, binding) in bindings.enumerated() {
+                        Instruction.loadLocal(arrSlot, into: &chunk)
+                        Instruction.constInt(i, into: &chunk)
+                        chunk.write(.getIndex)
+                        let slot = scopeTracker.declare(name: binding, isMutable: false)
+                        Instruction.storeLocal(slot, into: &chunk)
+                    }
+
+                    chunk.write(.pop) // Pop the subject
+                    compileBlock(switchCase.body)
+                    let removed = scopeTracker.popScope()
+                    for _ in removed { chunk.write(.pop) }
+                } else {
+                    chunk.write(.pop) // Pop the subject
+                    compileBlock(switchCase.body)
+                }
                 let endJump = Instruction.jump(into: &chunk)
                 endJumps.append(endJump)
 
