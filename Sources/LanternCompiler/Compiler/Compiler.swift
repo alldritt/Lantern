@@ -174,9 +174,24 @@ public final class BytecodeCompiler: @unchecked Sendable {
                         Instruction.storeGlobal(nameIndex, into: &chunk)
                     }
                 } else if let propAccess = memberAccess.object as? MemberAccessNode {
+                    // Stack: [modifiedValue]. Need [object, modifiedValue]
+                    let tempSlot2 = scopeTracker.declare(name: "__chain_temp", isMutable: true)
+                    Instruction.storeLocal(tempSlot2, into: &chunk)
                     compileExpression(propAccess.object)
+                    Instruction.loadLocal(tempSlot2, into: &chunk)
                     let nameIndex = chunk.constantPool.addPropertyName(propAccess.member)
                     Instruction.setProperty(nameIndex, into: &chunk)
+                    // For struct value semantics, also store the object back
+                    if let objIdent = propAccess.object as? IdentifierNode {
+                        // Reload modified object and store back
+                        compileExpression(propAccess.object)
+                        if let local = scopeTracker.resolve(objIdent.name) {
+                            Instruction.storeLocal(local.slot, into: &chunk)
+                        } else {
+                            let ni = chunk.constantPool.addString(objIdent.name)
+                            Instruction.storeGlobal(ni, into: &chunk)
+                        }
+                    }
                 } else {
                     chunk.write(.pop)
                 }
