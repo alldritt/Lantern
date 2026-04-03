@@ -157,11 +157,16 @@ public final class BytecodeCompiler: @unchecked Sendable {
                         Instruction.storeLocal(local.slot, into: &chunk)
                     } else if compilingMethodOfType != nil && symbolTable.lookup(receiver.name) == nil && !isKnownGlobal(receiver.name) {
                         // Implicit self.property — store back via setProperty
+                        // Stack has: [modifiedValue]. Need: [self, modifiedValue]
+                        // So push self UNDER the value: swap by storing value, pushing self, pushing value
+                        let tempSlot = scopeTracker.declare(name: "__storeback_temp", isMutable: true)
+                        Instruction.storeLocal(tempSlot, into: &chunk) // save modified value
                         if let selfLocal = scopeTracker.resolve("self") {
                             Instruction.loadLocal(selfLocal.slot, into: &chunk)
                         } else {
                             Instruction.loadLocal(0, into: &chunk)
                         }
+                        Instruction.loadLocal(tempSlot, into: &chunk) // restore modified value on top
                         let nameIndex = chunk.constantPool.addPropertyName(receiver.name)
                         Instruction.setProperty(nameIndex, into: &chunk)
                     } else {
@@ -997,7 +1002,7 @@ public final class BytecodeCompiler: @unchecked Sendable {
             compileStatement(stmt)
         }
 
-        compilingMethodOfType = nil
+        compilingMethodOfType = savedCompilingMethod
 
         if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {
             chunk.write(.returnVoid)
