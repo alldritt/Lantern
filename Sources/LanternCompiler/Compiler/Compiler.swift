@@ -16,6 +16,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private var continueTargets: [Int] = []
     private var loopDepth = 0
     private var compilingMethodOfType: String? = nil
+    /// Outer scope locals available for capture (set during closure compilation)
+    private var outerLocals: [ScopeTracker.Local] = []
+    /// Captured variable names in order (built during closure body compilation)
+    private var capturedNames: [String] = []
 
     private var currentFileName: String = "<input>"
     private var sourceText: String = ""
@@ -1390,6 +1394,17 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // Check locals first (inner to outer scope)
         if let local = scopeTracker.resolve(ident.name) {
             Instruction.loadLocal(local.slot, into: &chunk)
+        } else if !outerLocals.isEmpty, let outerLocal = outerLocals.first(where: { $0.name == ident.name }) {
+            // Captured variable from enclosing scope
+            if let captureIdx = capturedNames.firstIndex(of: ident.name) {
+                chunk.write(.loadCapture)
+                chunk.writeU16(UInt16(captureIdx))
+            } else {
+                capturedNames.append(ident.name)
+                chunk.write(.loadCapture)
+                chunk.writeU16(UInt16(capturedNames.count - 1))
+            }
+            _ = outerLocal // suppress warning
         } else if compilingMethodOfType != nil && symbolTable.lookup(ident.name)?.isType != true {
             // Inside a type method body — unresolved identifiers are implicit self.property
             if let selfLocal = scopeTracker.resolve("self") {
@@ -1501,6 +1516,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private func compileClosureExpression(_ closure: ClosureExpressionNode) {
         let closureName = "<closure_\(chunk.count)>"
 
+        // Save outer scope locals for capture detection
+        let savedOuterLocals = outerLocals
+        let savedCapturedNames = capturedNames
+
+        // Collect all current locals as potential captures
+        var allOuterLocals: [ScopeTracker.Local] = []
+        // Get current scope locals before resetting
+        for name in scopeTracker.allLocalNames() {
+            if let local = scopeTracker.resolve(name) {
+                allOuterLocals.append(local)
+            }
+        }
+        outerLocals = allOuterLocals
+        capturedNames = []
+
         // Jump over the closure body
         let jumpOver = Instruction.jump(into: &chunk)
         let bodyStart = chunk.count
@@ -1536,6 +1566,19 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let bodyEnd = chunk.count
         Instruction.patchJump(at: jumpOver, in: &chunk)
 
+        let captureCount = capturedNames.count
+
+        // Push captured values in REVERSE order (CLOSURE pops them in LIFO)
+        for captureName in capturedNames.reversed() {
+            if let outerLocal = allOuterLocals.first(where: { $0.name == captureName }) {
+                Instruction.loadLocal(outerLocal.slot, into: &chunk)
+            } else {
+                // Try global
+                let nameIndex = chunk.constantPool.addString(captureName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+            }
+        }
+
         let params = closure.parameters.map { ParameterInfo(name: $0) }
 
         let funcRef = FunctionRef(
@@ -1547,7 +1590,6 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
-        // Record in function table for VM dispatch
         functionDebugInfo.append(FunctionDebugInfo(
             name: closureName,
             parameterNames: closure.parameters,
@@ -1557,7 +1599,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         chunk.write(.closure)
         chunk.writeU16(funcIndex)
-        chunk.write(0) // captures count (simplified — capture support pending)
+        chunk.write(UInt8(captureCount))
+
+        // Restore outer state
+        outerLocals = savedOuterLocals
+        capturedNames = savedCapturedNames
     }
 
     private func compileAssignment(_ assign: AssignmentNode) {

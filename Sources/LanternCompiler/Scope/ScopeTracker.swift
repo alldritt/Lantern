@@ -67,6 +67,9 @@ public final class ScopeTracker: @unchecked Sendable {
         locals.contains { $0.name == name && $0.depth == scopeDepth }
     }
 
+    /// All currently declared local variable names.
+    public func allLocalNames() -> [String] { locals.map(\.name) }
+
     /// Reset the tracker for reuse.
     public func reset() {
         locals.removeAll()

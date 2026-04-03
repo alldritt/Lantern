@@ -38,6 +38,17 @@ struct HigherOrderTests {
         #expect(lanternOutput(src) == "[1, 9, 25]")
     }
 
+    @Test func closureCapture() {
+        let src = """
+        func makeMultiplier(_ factor: Int) -> (Int) -> Int {
+            return { n in n * factor }
+        }
+        let triple = makeMultiplier(3)
+        print(triple(10))
+        """
+        #expect(lanternOutput(src) == "30")
+    }
+
     @Test func staticMethod() {
         let src = """
         struct MathHelper {
