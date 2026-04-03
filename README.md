@@ -967,16 +967,27 @@ The optimizer iterates until convergence (up to 3 passes by default).
 
 ## Project Status
 
-Lantern is under active development. The interpreter currently handles:
+**Conformance: 321/351 tests passing (91.5%)** — 7 fixture files at 100%.
 
-- Integer, double, boolean, string, and nil literals
-- Arithmetic, comparison, and logical operators
-- `let` and `var` declarations
-- `print()` output
-- String concatenation
-- Global variable storage and retrieval
+The interpreter handles:
 
-Upcoming work follows the phased implementation plan, progressively adding control flow, functions, closures, collections, user-defined types, protocols, error handling, and the SwiftUI bridge.
+- Arithmetic, comparison, logical, and string operators with correct precedence
+- `let`/`var` declarations, `if`/`else`/`guard`, `while`, `for-in` (ranges and arrays)
+- Functions with recursion, default parameters, and nested calls
+- Closures with `$0` shorthand, captures from enclosing scope, trailing closures
+- Arrays with `map`, `filter`, `reduce`, `forEach`, `sorted`, `contains`, mutation
+- Dictionaries with subscript read/write, iteration, Int/String keys
+- Optionals with `if let`, `guard let`, nil coalescing (`??`), optional chaining, `map`/`flatMap`
+- Structs with memberwise init, custom init, methods, computed properties (get/set), static members, value semantics
+- Classes with custom init, methods, computed properties, reference semantics, static members
+- Enums with switch matching, raw values (Int/String), computed properties, methods
+- Protocols with conformance, extensions on built-in types, computed properties via extensions
+- Error handling with `do`/`try`/`catch`, `throw`, `defer` (including LIFO ordering)
+- Higher-order functions: `map`, `filter`, `reduce`, `zip`, operator function references (`+`, `*`)
+- String interpolation, escape sequences, `CustomStringConvertible`
+- `print()`, `String()`, `Int()`, `Double()`, `abs()`, `min()`, `max()`, `Array()`, `zip()`
+
+Remaining work: mutable closure captures, enum associated value destructuring, generics, tuple patterns, and the SwiftUI bridge.
 
 ## License
 
