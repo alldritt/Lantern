@@ -907,21 +907,39 @@ public final class VM: @unchecked Sendable {
                 throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
             }
         case .optional(.some(let inner)):
-            // Optional chaining: unwrap and call method
-            try stack.push(inner)
-            for arg in args { try stack.push(arg) }
-            let handled = try callMethod(name, argCount: args.count)
-            // Wrap result in optional
-            if !handled {
-                let methodResult = stack.pop()
-                try stack.push(.optional(methodResult))
+            // Check for Optional-specific methods first
+            switch name {
+            case "map":
+                guard let transform = args.first else { try stack.push(.nil_); return false }
+                let mapped = try invokeValue(transform, args: [inner])
+                try stack.push(.optional(mapped))
+                return false
+            case "flatMap":
+                guard let transform = args.first else { try stack.push(.nil_); return false }
+                let mapped = try invokeValue(transform, args: [inner])
+                try stack.push(mapped) // flatMap doesn't double-wrap
+                return false
+            default:
+                // Optional chaining: unwrap and call method on inner value
+                try stack.push(inner)
+                for arg in args { try stack.push(arg) }
+                let handled = try callMethod(name, argCount: args.count)
+                if !handled {
+                    let methodResult = stack.pop()
+                    try stack.push(.optional(methodResult))
+                }
+                return handled
             }
-            return handled
 
         case .optional(.none), .nil_:
-            // Optional chaining on nil: return nil
-            try stack.push(.nil_)
-            return false
+            switch name {
+            case "map", "flatMap":
+                try stack.push(.nil_)
+                return false
+            default:
+                try stack.push(.nil_)
+                return false
+            }
 
         case .range(let start, let end, let inclusive):
             // Convert range to array and dispatch

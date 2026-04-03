@@ -134,6 +134,23 @@ public final class Interpreter {
             return .string(arg.typeName)
         }
         vm.environment.setGlobal("type", value: .nativeFunction(typeOfFn))
+
+        // Operator functions as values (for reduce(0, +) etc.)
+        let addOpFn = NativeFunctionRef(name: "+", arity: 2) { args in
+            let a = args[0], b = args[1]
+            if let la = a.intValue, let lb = b.intValue { return .int(la + lb) }
+            if let la = a.doubleValue, let lb = b.doubleValue { return .double(la + lb) }
+            if case .string(let la) = a, case .string(let lb) = b { return .string(la + lb) }
+            return .nil_
+        }
+        vm.environment.setGlobal("+", value: .nativeFunction(addOpFn))
+
+        let mulOpFn = NativeFunctionRef(name: "*", arity: 2) { args in
+            if let a = args[0].intValue, let b = args[1].intValue { return .int(a * b) }
+            if let a = args[0].doubleValue, let b = args[1].doubleValue { return .double(a * b) }
+            return .nil_
+        }
+        vm.environment.setGlobal("*", value: .nativeFunction(mulOpFn))
     }
 
     /// Compile Swift source into a compiled program.
