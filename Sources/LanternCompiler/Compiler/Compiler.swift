@@ -155,14 +155,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 if let receiver = memberAccess.object as? IdentifierNode {
                     if let local = scopeTracker.resolve(receiver.name) {
                         Instruction.storeLocal(local.slot, into: &chunk)
+                    } else if compilingMethodOfType != nil && symbolTable.lookup(receiver.name) == nil && !isKnownGlobal(receiver.name) {
+                        // Implicit self.property — store back via setProperty
+                        if let selfLocal = scopeTracker.resolve("self") {
+                            Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                        } else {
+                            Instruction.loadLocal(0, into: &chunk)
+                        }
+                        let nameIndex = chunk.constantPool.addPropertyName(receiver.name)
+                        Instruction.setProperty(nameIndex, into: &chunk)
                     } else {
                         let nameIndex = chunk.constantPool.addString(receiver.name)
                         Instruction.storeGlobal(nameIndex, into: &chunk)
                     }
                 } else if let propAccess = memberAccess.object as? MemberAccessNode {
-                    // Chained: self.observers.append(name)
-                    // Store back to self.property
-                    compileExpression(propAccess.object) // push self
+                    compileExpression(propAccess.object)
                     let nameIndex = chunk.constantPool.addPropertyName(propAccess.member)
                     Instruction.setProperty(nameIndex, into: &chunk)
                 } else {
@@ -1128,6 +1135,61 @@ public final class BytecodeCompiler: @unchecked Sendable {
         chunk.writeU16(funcIndex)
         chunk.write(0)
         Instruction.storeGlobal(nameIndex, into: &chunk)
+
+        // Compile setter if present
+        if let setter = prop.setter {
+            let setterName = "\(typeName).__set_\(prop.name)"
+            let setJumpOver = Instruction.jump(into: &chunk)
+            let setBodyStart = chunk.count
+
+            let setSavedSlots = scopeTracker.saveSlotState()
+            scopeTracker.restoreSlotState(0)
+            let setSavedMethod = compilingMethodOfType
+            compilingMethodOfType = typeName
+            scopeTracker.pushScope()
+            scopeTracker.declare(name: "self", isMutable: true)
+            scopeTracker.declare(name: "newValue", isMutable: false)
+
+            for stmt in setter.statements {
+                compileStatement(stmt)
+            }
+
+            // Return self (modified)
+            if let selfLocal = scopeTracker.resolve("self") {
+                Instruction.loadLocal(selfLocal.slot, into: &chunk)
+            } else {
+                Instruction.loadLocal(0, into: &chunk)
+            }
+            chunk.write(.return_)
+
+            _ = scopeTracker.popScope()
+            compilingMethodOfType = setSavedMethod
+            scopeTracker.restoreSlotState(setSavedSlots)
+
+            let setBodyEnd = chunk.count
+            Instruction.patchJump(at: setJumpOver, in: &chunk)
+
+            let setFuncRef = FunctionRef(
+                name: setterName,
+                parameters: [ParameterInfo(name: "self"), ParameterInfo(name: "newValue")],
+                localCount: UInt16(2 + 16),
+                bytecode: []
+            )
+            let setFuncIndex = chunk.constantPool.addFunction(setFuncRef)
+
+            functionDebugInfo.append(FunctionDebugInfo(
+                name: setterName,
+                parameterNames: ["self", "newValue"],
+                sourceRange: (start: prop.location, end: prop.location),
+                bytecodeRange: (start: setBodyStart, end: setBodyEnd)
+            ))
+
+            let setNameIndex = chunk.constantPool.addString(setterName)
+            chunk.write(.closure)
+            chunk.writeU16(setFuncIndex)
+            chunk.write(0)
+            Instruction.storeGlobal(setNameIndex, into: &chunk)
+        }
     }
 
     /// Compile a custom init declaration as the type's constructor.

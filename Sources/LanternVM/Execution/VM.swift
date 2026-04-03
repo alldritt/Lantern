@@ -243,7 +243,15 @@ public final class VM: @unchecked Sendable {
         case .setProperty:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.propertyName(at: ni) else { throw decodeError() }
             let val = stack.pop(), inst = stack.pop()
-            if case .instance(let ref) = inst { ref.setProperty(name, val) }
+            if case .instance(let ref) = inst {
+                // Check for computed property setter
+                let setterName = "\(ref.typeName).__set_\(name)"
+                if let setter = environment.getGlobal(setterName) {
+                    _ = try invokeValue(setter, args: [inst, val])
+                } else {
+                    ref.setProperty(name, val)
+                }
+            }
             ip += 3
         case .getIndex:
             let idx = stack.pop(), col = stack.pop()
