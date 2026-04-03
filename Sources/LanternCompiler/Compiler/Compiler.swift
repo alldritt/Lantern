@@ -286,7 +286,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
             Instruction.storeGlobal(nameIndex, into: &chunk)
         } else {
             // Local variable — allocate a stack slot
-            let slot = scopeTracker.declare(name: decl.name, isMutable: decl.isMutable, typeAnnotation: decl.typeAnnotation)
+            let hasInit = decl.initializer != nil
+            let slot = scopeTracker.declare(name: decl.name, isMutable: decl.isMutable, typeAnnotation: decl.typeAnnotation, isInitialized: hasInit)
             Instruction.storeLocal(slot, into: &chunk)
         }
     }
@@ -1784,9 +1785,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
             } else {
                 compileExpression(assign.value)
                 if let local = scopeTracker.resolve(ident.name) {
-                    if !local.isMutable {
+                    if !local.isMutable && local.isInitialized {
+                        // Let was declared with an initializer — true reassignment is an error
                         diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
                     }
+                    // Deferred let init (isInitialized=false) — allow assignment without error
                     chunk.write(.dup)
                     Instruction.storeLocal(local.slot, into: &chunk)
                 } else {

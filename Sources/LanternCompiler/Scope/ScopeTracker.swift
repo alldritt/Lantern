@@ -9,13 +9,17 @@ public final class ScopeTracker: @unchecked Sendable {
         public let depth: Int
         public let isMutable: Bool
         public let typeAnnotation: String?
+        /// Whether the variable has been initialized (assigned a value).
+        /// A `let` without an initializer starts as false and becomes true on first assignment.
+        public var isInitialized: Bool
 
-        public init(name: String, slot: UInt16, depth: Int, isMutable: Bool, typeAnnotation: String? = nil) {
+        public init(name: String, slot: UInt16, depth: Int, isMutable: Bool, typeAnnotation: String? = nil, isInitialized: Bool = true) {
             self.name = name
             self.slot = slot
             self.depth = depth
             self.isMutable = isMutable
             self.typeAnnotation = typeAnnotation
+            self.isInitialized = isInitialized
         }
     }
 
@@ -44,22 +48,26 @@ public final class ScopeTracker: @unchecked Sendable {
     // MARK: - Variable Management
 
     @discardableResult
-    public func declare(name: String, isMutable: Bool, typeAnnotation: String? = nil) -> UInt16 {
+    public func declare(name: String, isMutable: Bool, typeAnnotation: String? = nil, isInitialized: Bool = true) -> UInt16 {
         let slot = nextSlot
-        locals.append(Local(name: name, slot: slot, depth: scopeDepth, isMutable: isMutable, typeAnnotation: typeAnnotation))
+        locals.append(Local(name: name, slot: slot, depth: scopeDepth, isMutable: isMutable, typeAnnotation: typeAnnotation, isInitialized: isInitialized))
         nextSlot += 1
         return slot
     }
 
     /// Resolve a name to its local slot. Returns nil if the name is not found.
     public func resolve(_ name: String) -> Local? {
-        // Search from innermost scope outward
         for local in locals.reversed() {
-            if local.name == name {
-                return local
-            }
+            if local.name == name { return local }
         }
         return nil
+    }
+
+    /// Mark a local variable as initialized (for deferred let init).
+    public func markInitialized(_ name: String) {
+        if let idx = locals.lastIndex(where: { $0.name == name }) {
+            locals[idx].isInitialized = true
+        }
     }
 
     /// Check if a name is declared in the current scope specifically.
