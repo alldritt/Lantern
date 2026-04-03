@@ -200,7 +200,11 @@ extension Value: Equatable {
         // nil comparisons with optional
         case (.nil_, .optional(.none)): return true
         case (.optional(.none), .nil_): return true
-        case (.instance(let a), .instance(let b)): return a === b
+        case (.instance(let a), .instance(let b)):
+            if a.kind == .class { return a === b } // Classes: identity
+            // Structs: structural equality
+            guard a.typeName == b.typeName, a.propertyNames == b.propertyNames else { return false }
+            return a.propertyNames.allSatisfy { a.property($0) == b.property($0) }
         default: return false
         }
     }
