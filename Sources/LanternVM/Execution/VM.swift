@@ -181,7 +181,14 @@ public final class VM: @unchecked Sendable {
             try stack.push(.bool(lb || rb)); ip += 1
 
         // Stack
-        case .pop: _ = stack.pop(); ip += 1
+        case .pop:
+            let popped = stack.pop()
+            // When a view collector is active (inside a container closure),
+            // collect view values instead of discarding them.
+            if let collector = swiftUIContext?.viewCollector {
+                collector.collectView(popped)
+            }
+            ip += 1
         case .dup: try stack.push(stack.peek()); ip += 1
 
         // Variables

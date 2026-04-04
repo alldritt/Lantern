@@ -116,13 +116,28 @@ private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
                 }
             }
 
-            // Invoke trailing closure to get child view(s)
+            // Invoke trailing closure with a ViewCollector to gather ALL child views.
+            // The VM's pop opcode intercepts ViewBox values when a collector is active.
+            let collector = ViewCollector()
             var childBox = ViewBox(AnyView(EmptyView()))
             if let closure = closureArg {
+                // Set up context with collector
+                let savedContext = vm.swiftUIContext
+                let stateStore = savedContext?.stateStore ?? DummyStateStore()
+                vm.swiftUIContext = SwiftUIContext(stateStore: stateStore, viewCollector: collector)
+
                 let result = try vm.invokeValue(closure, args: [])
+
+                // Restore context
+                vm.swiftUIContext = savedContext
+
+                // The closure's return value (last expression) is also a view
                 if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
-                    childBox = box
+                    collector.views.append(box.view)
                 }
+
+                // Build combined view from all collected children
+                childBox = ViewBox(collector.buildCombinedView())
             }
 
             let spacingValue = spacing?.doubleValue.map { CGFloat($0) }
@@ -224,5 +239,12 @@ private func namedColor(_ name: String) -> Color? {
     case "secondary": return .secondary
     default: return nil
     }
+}
+
+/// Minimal StateStoreProtocol for container closures invoked outside a ViewStub context.
+private final class DummyStateStore: StateStoreProtocol {
+    func get(_ name: String) -> Value { .nil_ }
+    func set(_ name: String, _ value: Value) {}
+    func contains(_ name: String) -> Bool { false }
 }
 #endif
