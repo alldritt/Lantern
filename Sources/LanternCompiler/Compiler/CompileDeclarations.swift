@@ -391,8 +391,23 @@ extension BytecodeCompiler {
         scopeTracker.pushScope()
         scopeTracker.declare(name: "self", isMutable: false)
 
-        for stmt in prop.getter.statements {
-            compileStatement(stmt)
+        // Compile getter body with implicit return for the last expression.
+        // In Swift, single-expression computed properties implicitly return.
+        let stmts = prop.getter.statements
+        for (i, stmt) in stmts.enumerated() {
+            let isLast = (i == stmts.count - 1)
+            if isLast, stmt is ExpressionStatementNode {
+                // Last statement is an expression — compile it but don't pop,
+                // then emit return_ so the value is returned from the getter.
+                if let exprStmt = stmt as? ExpressionStatementNode {
+                    compileExpression(exprStmt.expression)
+                    chunk.write(.return_)
+                } else {
+                    compileStatement(stmt)
+                }
+            } else {
+                compileStatement(stmt)
+            }
         }
 
         if chunk.bytecode.isEmpty || chunk.bytecode.last != Opcode.return_.rawValue {

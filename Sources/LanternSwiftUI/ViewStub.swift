@@ -34,8 +34,10 @@ public struct ViewStub: View {
         // Evaluate the body by invoking the getter with self = instance
         do {
             let result = try vm.invokeValue(getter, args: [.instance(instance)])
+            print("[ViewStub] \(instance.typeName) body result: \(result)")
             return ViewFactory.viewFromValue(result)
         } catch {
+            print("[ViewStub] \(instance.typeName) body error: \(error)")
             return AnyView(Text("Error: \(error)"))
         }
     }
