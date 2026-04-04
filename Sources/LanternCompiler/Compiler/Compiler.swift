@@ -74,11 +74,20 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
         }
 
-        // Third pass: compile remaining statements
-        for statement in ast.statements {
-            if !(statement is FunctionDeclarationNode || statement is StructDeclarationNode ||
-                 statement is ClassDeclarationNode || statement is EnumDeclarationNode ||
-                 statement is ExtensionNode) {
+        // Third pass: compile remaining statements.
+        // For the last expression statement, suppress the pop so the result
+        // stays on the stack as the program's return value (displayed in preview).
+        let topLevelStatements = ast.statements.filter {
+            !($0 is FunctionDeclarationNode || $0 is StructDeclarationNode ||
+              $0 is ClassDeclarationNode || $0 is EnumDeclarationNode ||
+              $0 is ExtensionNode)
+        }
+        for (i, statement) in topLevelStatements.enumerated() {
+            let isLast = (i == topLevelStatements.count - 1)
+            if isLast, statement is ExpressionStatementNode {
+                // Last top-level expression: keep result on stack
+                compileExpression((statement as! ExpressionStatementNode).expression)
+            } else {
                 compileStatement(statement)
             }
         }
