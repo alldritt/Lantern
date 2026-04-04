@@ -668,6 +668,8 @@ public final class VM: @unchecked Sendable {
             let savedIP = ip
             let savedCallStack = callStack
             let savedStackTop = stack.count
+            let savedState = state
+            state = .running  // Ensure execution loop can run (may be .halted)
 
             // Push callee + args
             try stack.push(callable)
@@ -711,7 +713,7 @@ public final class VM: @unchecked Sendable {
             stack.truncate(to: savedStackTop)
             callStack = savedCallStack
             ip = savedIP
-            state = .running
+            state = savedState
 
             return result
 
