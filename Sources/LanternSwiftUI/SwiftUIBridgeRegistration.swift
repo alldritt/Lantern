@@ -4,8 +4,9 @@ import LanternVM
 import LanternBridge
 
 /// Registers SwiftUI view types, modifiers, and state management in a BridgeRegistry.
-public func registerSwiftUIBridge(on registry: BridgeRegistry) {
-    // MARK: - View Constructors
+/// The VM is needed for container types that invoke trailing closures.
+public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
+    // MARK: - Leaf View Constructors
 
     registry.registerType("Text") { args in
         let text = args.first?.stringValue ?? ""
@@ -13,22 +14,19 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry) {
     }
 
     registry.registerType("Spacer") { _ in
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Spacer())), typeName: "Spacer"))
+        .hostObject(HostObjectRef(object: ViewBox(AnyView(Spacer())), typeName: "Spacer"))
     }
 
     registry.registerType("Divider") { _ in
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Divider())), typeName: "Divider"))
+        .hostObject(HostObjectRef(object: ViewBox(AnyView(Divider())), typeName: "Divider"))
     }
 
     registry.registerType("Image") { args in
         let name = args.first?.stringValue ?? ""
-        let view: AnyView
-        // If label is "systemName", use SF Symbols
-        if args.count >= 2 {
-            view = AnyView(Image(systemName: name))
-        } else {
-            view = AnyView(Image(systemName: name))
-        }
+        // Two-arg form: Image(systemName: "star") — first arg is name string
+        // One-arg form: Image("photo") — asset name
+        // For now, default to systemName (SF Symbols) since that's most common in prototyping
+        let view = AnyView(Image(systemName: name))
         return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Image"))
     }
 
@@ -51,12 +49,16 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry) {
     // MARK: - Color
 
     registry.registerType("Color") { args in
+        if args.count >= 3,
+           let r = args[0].doubleValue, let g = args[1].doubleValue, let b = args[2].doubleValue {
+            let color = Color(red: r, green: g, blue: b)
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(color)), typeName: "Color"))
+        }
         let name = args.first?.stringValue ?? "clear"
         let color = namedColor(name) ?? .clear
         return .hostObject(HostObjectRef(object: ViewBox(AnyView(color)), typeName: "Color"))
     }
 
-    // Register named color constants
     for name in ["red", "blue", "green", "yellow", "orange", "purple", "pink",
                   "white", "black", "gray", "clear", "primary", "secondary"] {
         if let color = namedColor(name) {
@@ -66,7 +68,14 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry) {
         }
     }
 
-    // MARK: - Modifier Methods (applied to any view host object)
+    // MARK: - Container View Constructors (need VM for trailing closures)
+
+    if let vm = vm {
+        registerContainerTypes(on: registry, vm: vm)
+        registerButton(on: registry, vm: vm)
+    }
+
+    // MARK: - Modifier Methods
 
     let modifierNames = [
         "padding", "frame", "font", "bold", "italic", "underline",
@@ -77,8 +86,6 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry) {
         "multilineTextAlignment", "listStyle", "animation"
     ]
 
-    // Register modifiers as methods on a generic "View" type
-    // The bridge dispatch will forward these to ModifierApplicator
     for modName in modifierNames {
         registry.registerMethod(typeName: "View", selector: modName, parameterLabels: []) { receiver, args in
             guard let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else {
@@ -87,6 +94,108 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry) {
             let (modified, _) = ModifierApplicator.apply(modName, arguments: args, to: box.view)
             return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
         }
+    }
+}
+
+// MARK: - Container Types
+
+private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
+    let containerTypes = ["VStack", "HStack", "ZStack", "ScrollView", "Group", "List", "NavigationStack"]
+
+    for typeName in containerTypes {
+        registry.registerType(typeName) { [weak vm] args in
+            guard let vm else { return .nil_ }
+            var spacing: Value? = nil
+            var closureArg: Value? = nil
+
+            for arg in args {
+                switch arg {
+                case .closure: closureArg = arg
+                case .int, .double: spacing = arg
+                default: break
+                }
+            }
+
+            // Invoke trailing closure to get child view(s)
+            var childBox = ViewBox(AnyView(EmptyView()))
+            if let closure = closureArg {
+                let result = try vm.invokeValue(closure, args: [])
+                if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                    childBox = box
+                }
+            }
+
+            let spacingValue = spacing?.doubleValue.map { CGFloat($0) }
+            let containerView: AnyView
+            switch typeName {
+            case "VStack":
+                containerView = AnyView(VStack(spacing: spacingValue ?? 8) { childBox.view })
+            case "HStack":
+                containerView = AnyView(HStack(spacing: spacingValue ?? 8) { childBox.view })
+            case "ZStack":
+                containerView = AnyView(ZStack { childBox.view })
+            case "ScrollView":
+                containerView = AnyView(ScrollView { childBox.view })
+            case "Group":
+                containerView = AnyView(Group { childBox.view })
+            case "List":
+                containerView = AnyView(List { childBox.view })
+            case "NavigationStack":
+                containerView = AnyView(NavigationStack { childBox.view })
+            default:
+                containerView = AnyView(childBox.view)
+            }
+
+            return .hostObject(HostObjectRef(object: ViewBox(containerView), typeName: typeName))
+        }
+    }
+}
+
+// MARK: - Button
+
+private func registerButton(on registry: BridgeRegistry, vm: VM) {
+    registry.registerType("Button") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        var title: String? = nil
+        var actionClosure: Value? = nil
+        var labelClosure: Value? = nil
+
+        for arg in args {
+            switch arg {
+            case .string(let s):
+                title = s
+            case .closure:
+                if actionClosure == nil {
+                    actionClosure = arg
+                } else {
+                    labelClosure = arg
+                }
+            default:
+                break
+            }
+        }
+
+        let action: () -> Void = {
+            if let actionClosure {
+                _ = try? vm.invokeValue(actionClosure, args: [])
+            }
+        }
+
+        let view: AnyView
+        if let title {
+            view = AnyView(Button(title, action: action))
+        } else if let labelClosure {
+            var labelView = AnyView(EmptyView())
+            if let result = try? vm.invokeValue(labelClosure, args: []),
+               case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                labelView = box.view
+            }
+            view = AnyView(Button(action: action) { labelView })
+        } else {
+            view = AnyView(Button("", action: action))
+        }
+
+        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Button"))
     }
 }
 

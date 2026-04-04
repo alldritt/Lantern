@@ -84,7 +84,7 @@ let package = Package(
         .testTarget(name: "LanternCompilerTests", dependencies: ["LanternCompiler", "LanternVM"]),
         .testTarget(name: "LanternDebuggerTests", dependencies: ["LanternDebugger", "LanternVM"]),
         .testTarget(name: "LanternBridgeTests", dependencies: ["LanternBridge", "LanternVM"]),
-        .testTarget(name: "LanternSwiftUITests", dependencies: ["LanternSwiftUI", "LanternVM"]),
+        .testTarget(name: "LanternSwiftUITests", dependencies: ["LanternSwiftUI", "LanternVM", "LanternBridge"]),
         .testTarget(name: "LanternTests", dependencies: ["Lantern"]),
     ]
 )

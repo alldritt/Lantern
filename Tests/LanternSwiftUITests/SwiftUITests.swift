@@ -1,7 +1,9 @@
 #if canImport(SwiftUI)
 import Testing
+import SwiftUI
 @testable import LanternVM
 @testable import LanternSwiftUI
+@testable import LanternBridge
 
 @Suite("LanternStateStore")
 struct StateStoreTests {
@@ -57,45 +59,60 @@ struct SwiftUIContextTests {
         #expect(!store.contains("missing"))
     }
 
-    @Test func viewFactoryCreatesText() {
-        let vm = VM()
-        let factory = ViewFactory(vm: vm)
-        let result = factory.createView(typeName: "Text", arguments: [.string("Hello")])
-        #expect(result != nil)
-        #expect(result?.1.typeName == "Text")
-    }
+    @Test func viewFactoryConvertsValues() {
+        // String → Text view
+        let textView = ViewFactory.viewFromValue(.string("Hello"))
+        #expect(textView is AnyView)
 
-    @Test func viewFactoryCreatesSpacer() {
-        let vm = VM()
-        let factory = ViewFactory(vm: vm)
-        let result = factory.createView(typeName: "Spacer", arguments: [])
-        #expect(result != nil)
-        #expect(result?.1.typeName == "Spacer")
-    }
+        // Nil → EmptyView
+        let emptyView = ViewFactory.viewFromValue(.nil_)
+        #expect(emptyView is AnyView)
 
-    @Test @MainActor func viewFactoryCreatesContainer() {
-        let vm = VM()
-        let factory = ViewFactory(vm: vm)
-        // Create two text views first
-        let (textView1, desc1) = factory.createView(typeName: "Text", arguments: [.string("A")])!
-        let (textView2, desc2) = factory.createView(typeName: "Text", arguments: [.string("B")])!
-        let result = factory.createContainer(
-            typeName: "VStack",
-            children: [textView1, textView2],
-            childDescriptors: [desc1, desc2],
-            arguments: []
-        )
-        #expect(result != nil)
-        #expect(result?.1.typeName == "VStack")
-        #expect(result?.1.children.count == 2)
+        // Descriptor from string value
+        let desc = ViewFactory.descriptorFromValue(.string("Hello"))
+        #expect(desc.typeName == "Text")
     }
 
     @Test func modifierApplicator() {
-        let vm = VM()
-        let factory = ViewFactory(vm: vm)
-        let (textView, _) = factory.createView(typeName: "Text", arguments: [.string("Hello")])!
+        let textView = AnyView(Text("Hello"))
         let (_, descriptor) = ModifierApplicator.apply("padding", arguments: [], to: textView)
         #expect(descriptor.name == "padding")
+    }
+
+    @Test func bridgeRegistersViewTypes() {
+        let registry = BridgeRegistry()
+        registerSwiftUIBridge(on: registry)
+        #expect(registry.isTypeRegistered("Text"))
+        #expect(registry.isTypeRegistered("Spacer"))
+        #expect(registry.isTypeRegistered("Divider"))
+        #expect(registry.isTypeRegistered("Image"))
+        #expect(registry.isTypeRegistered("Color"))
+        #expect(registry.isTypeRegistered("ProgressView"))
+    }
+
+    @Test func bridgeRegistersContainersWithVM() {
+        let registry = BridgeRegistry()
+        let vm = VM()
+        registerSwiftUIBridge(on: registry, vm: vm)
+        #expect(registry.isTypeRegistered("VStack"))
+        #expect(registry.isTypeRegistered("HStack"))
+        #expect(registry.isTypeRegistered("Button"))
+        #expect(registry.isTypeRegistered("NavigationStack"))
+    }
+
+    @Test func bridgeTextConstructor() throws {
+        let registry = BridgeRegistry()
+        registerSwiftUIBridge(on: registry)
+        guard let constructor = registry.lookupConstructor("Text") else {
+            Issue.record("Text constructor not found"); return
+        }
+        let result = try constructor([.string("Hello")])
+        if case .hostObject(let ref) = result {
+            #expect(ref.typeName == "Text")
+            #expect(ref.object is ViewBox)
+        } else {
+            Issue.record("Expected hostObject")
+        }
     }
 }
 

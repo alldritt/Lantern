@@ -34,23 +34,9 @@ public struct ViewStub: View {
         // Evaluate the body by invoking the getter with self = instance
         do {
             let result = try vm.invokeValue(getter, args: [.instance(instance)])
-            return viewFromValue(result)
+            return ViewFactory.viewFromValue(result)
         } catch {
             return AnyView(Text("Error: \(error)"))
-        }
-    }
-
-    /// Convert a runtime Value to a SwiftUI AnyView.
-    private func viewFromValue(_ value: Value) -> AnyView {
-        switch value {
-        case .hostObject(let ref) where ref.object is ViewBox:
-            return (ref.object as! ViewBox).view
-        case .string(let text):
-            return AnyView(Text(text))
-        case .void, .nil_:
-            return AnyView(EmptyView())
-        default:
-            return AnyView(Text("\(value.description)"))
         }
     }
 }
