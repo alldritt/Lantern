@@ -184,7 +184,11 @@ public final class VM: @unchecked Sendable {
         // Variables
         case .loadLocal:
             guard let slot = readU16(at: ip + 1) else { throw decodeError() }
-            try stack.push(stack[basePointer + Int(slot)]); ip += 3
+            let val = stack[basePointer + Int(slot)]
+            // Transparent cell unwrap: read through CaptureCell
+            if case .cell(let c) = val { try stack.push(c.value) }
+            else { try stack.push(val) }
+            ip += 3
         case .storeLocal:
             guard let slot = readU16(at: ip + 1) else { throw decodeError() }
             let idx = basePointer + Int(slot)
@@ -195,6 +199,20 @@ public final class VM: @unchecked Sendable {
             }
             while stack.count <= idx { try stack.push(.nil_) }
             stack[idx] = value
+            ip += 3
+        case .captureLocal:
+            // Ensure slot has a CaptureCell, push the .cell itself for CLOSURE
+            guard let slot = readU16(at: ip + 1) else { throw decodeError() }
+            let idx = basePointer + Int(slot)
+            if case .cell(let c) = stack[idx] {
+                // Already a cell — push for reuse by CLOSURE
+                try stack.push(.cell(c))
+            } else {
+                // Wrap in new cell, write back, and push
+                let cell = CaptureCell(stack[idx])
+                stack[idx] = .cell(cell)
+                try stack.push(.cell(cell))
+            }
             ip += 3
         case .loadGlobal:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
@@ -241,7 +259,14 @@ public final class VM: @unchecked Sendable {
             guard let fi = readU16(at: ip + 1), let cc = readU8(at: ip + 3),
                   let fn = program.constantPool.function(at: fi) else { throw decodeError() }
             var cells: [CaptureCell] = []
-            for _ in 0..<cc { cells.append(CaptureCell(stack.pop())) }
+            for _ in 0..<cc {
+                let val = stack.pop()
+                if case .cell(let existingCell) = val {
+                    cells.append(existingCell) // Reuse shared cell
+                } else {
+                    cells.append(CaptureCell(val)) // New cell for globals
+                }
+            }
             try stack.push(.closure(ClosureRef(function: fn, captures: cells))); ip += 4
 
         // Properties

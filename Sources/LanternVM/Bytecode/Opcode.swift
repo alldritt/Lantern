@@ -39,6 +39,7 @@ public enum Opcode: UInt8, Sendable, CaseIterable {
     case storeCapture   = 0x3B  // u16 index
     case loadGlobal     = 0x3C  // u16 name index
     case storeGlobal    = 0x3D  // u16 name index
+    case captureLocal   = 0x3E  // u16 slot — ensure cell, push .cell for CLOSURE
 
     // MARK: Control Flow
     case jump           = 0x40  // i16 offset
@@ -127,7 +128,7 @@ extension Opcode {
         // 3 bytes (opcode + u16 or i16)
         case .constString,
              .loadLocal, .storeLocal, .loadCapture, .storeCapture,
-             .loadGlobal, .storeGlobal,
+             .loadGlobal, .storeGlobal, .captureLocal,
              .jump, .jumpIfTrue, .jumpIfFalse, .loop,
              .getProperty, .setProperty,
              .optionalChain,

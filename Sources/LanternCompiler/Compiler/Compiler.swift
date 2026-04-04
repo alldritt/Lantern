@@ -20,6 +20,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private var statePropertyNames: Set<String> = []
     /// Whether the current type conforms to View (enables @State opcode emission)
     private var isCompilingViewType: Bool = false
+    /// When true, suppress the pop after expression statements (for implicit closure returns)
+    private var suppressExpressionPop: Bool = false
     /// Outer scope locals available for capture (set during closure compilation)
     private var outerLocals: [ScopeTracker.Local] = []
     /// Captured variable names in order (built during closure body compilation)
@@ -205,7 +207,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 }
             } else {
                 compileExpression(exprStmt.expression)
-                chunk.write(.pop)
+                if !suppressExpressionPop {
+                    chunk.write(.pop)
+                }
             }
         } else if let ifStmt = stmt as? IfStatementNode {
             compileIfStatement(ifStmt)
@@ -1086,10 +1090,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
         let funcCaptureCount = capturedNames.count
 
-        // Push captured values in REVERSE order
+        // Push captured values in REVERSE order (CLOSURE pops them in LIFO)
+        // Use captureLocal for locals (ensures CaptureCell sharing) or loadGlobal for globals
         for captureName in capturedNames.reversed() {
             if let outerLocal = allOuterLocalsForFunc.first(where: { $0.name == captureName }) {
-                Instruction.loadLocal(outerLocal.slot, into: &chunk)
+                chunk.write(.captureLocal)
+                chunk.writeU16(UInt16(outerLocal.slot))
             } else {
                 let ni = chunk.constantPool.addString(captureName)
                 Instruction.loadGlobal(ni, into: &chunk)
@@ -2047,20 +2053,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
             scopeTracker.declare(name: param, isMutable: false)
         }
 
+        // For single-expression closures, suppress the pop so the value stays for return
+        let isImplicitReturn = closure.body.statements.count == 1
+            && closure.body.statements.first is ExpressionStatementNode
+        if isImplicitReturn { suppressExpressionPop = true }
+
         for stmt in closure.body.statements {
             compileStatement(stmt)
         }
 
-        // If last statement is an expression (implicit return), emit return
+        suppressExpressionPop = false
+
+        // Emit return if the body doesn't already end with one
         if chunk.bytecode.last != Opcode.return_.rawValue && chunk.bytecode.last != Opcode.returnVoid.rawValue {
-            // Check if last compiled statement was an expression (the value is on stack)
-            // For single-expression closures like { n * n }, the expression result is on stack
-            if closure.body.statements.count == 1 && closure.body.statements.first is ExpressionStatementNode {
-                // Remove the trailing pop (expression statement adds pop) and add return
-                if chunk.bytecode.last == Opcode.pop.rawValue {
-                    chunk.bytecode.removeLast()
-                }
-                chunk.write(.return_)
+            if isImplicitReturn {
+                chunk.write(.return_) // expression value is on stack
             } else {
                 chunk.write(.returnVoid)
             }
@@ -2074,9 +2081,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let captureCount = capturedNames.count
 
         // Push captured values in REVERSE order (CLOSURE pops them in LIFO)
+        // Use captureLocal for locals (ensures CaptureCell sharing) or loadGlobal for globals
         for captureName in capturedNames.reversed() {
             if let outerLocal = allOuterLocals.first(where: { $0.name == captureName }) {
-                Instruction.loadLocal(outerLocal.slot, into: &chunk)
+                chunk.write(.captureLocal)
+                chunk.writeU16(UInt16(outerLocal.slot))
             } else {
                 // Try global
                 let nameIndex = chunk.constantPool.addString(captureName)

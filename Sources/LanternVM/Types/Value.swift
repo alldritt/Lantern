@@ -14,6 +14,7 @@ public indirect enum Value: Sendable, CustomStringConvertible {
     case instance(InstanceRef)
     case enumCase(EnumCaseRef)
     case range(Int, Int, Bool) // start, end, inclusive
+    case cell(CaptureCell) // transparent reference wrapper for mutable captures
     case void
 
     // MARK: - Type Queries
@@ -35,6 +36,7 @@ public indirect enum Value: Sendable, CustomStringConvertible {
         case .instance(let ref): return ref.typeName
         case .enumCase(let ref): return ref.typeName
         case .range: return "Range"
+        case .cell(let c): return c.value.typeName
         case .void: return "Void"
         }
     }
@@ -130,6 +132,7 @@ public indirect enum Value: Sendable, CustomStringConvertible {
                 return "\(e.caseName)(\(av.map(\.description).joined(separator: ", ")))"
             }
             return e.caseName
+        case .cell(let c): return c.value.description
         case .void: return "()"
         }
     }
@@ -205,6 +208,10 @@ extension Value: Equatable {
             // Structs: structural equality
             guard a.typeName == b.typeName, a.propertyNames == b.propertyNames else { return false }
             return a.propertyNames.allSatisfy { a.property($0) == b.property($0) }
+        // Cell: compare through to underlying value
+        case (.cell(let a), .cell(let b)): return a.value == b.value
+        case (.cell(let a), let b): return a.value == b
+        case (let a, .cell(let b)): return a == b.value
         default: return false
         }
     }
