@@ -84,6 +84,20 @@ public indirect enum Value: Sendable, CustomStringConvertible {
         return nil
     }
 
+    /// Type name for built-in method registry lookup.
+    /// Maps Value cases to their canonical type names.
+    public var builtinTypeName: String {
+        switch self {
+        case .array: return "Array"
+        case .string: return "String"
+        case .dictionary: return "Dictionary"
+        case .range: return "Range"
+        case .optional: return "Optional"
+        case .cell(let c): return c.value.builtinTypeName
+        default: return typeName
+        }
+    }
+
     /// Whether this value is truthy (used in conditions).
     public var isTruthy: Bool {
         switch self {

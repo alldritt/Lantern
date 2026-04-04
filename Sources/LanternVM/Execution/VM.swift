@@ -47,6 +47,9 @@ public final class VM: @unchecked Sendable {
     /// Bridge property lookup. Set by Interpreter.
     public var bridgePropertyLookup: ((String, String) -> ((Value) throws -> Value)?)?
 
+    /// Built-in method registry for Array, String, Dictionary, Range, Optional.
+    private let builtinMethods = BuiltinMethodRegistry()
+
     // MARK: - Init
 
     public init(maxCallDepth: Int = defaultMaxCallDepth, executionLimit: Int = defaultExecutionLimit) {
@@ -757,496 +760,77 @@ public final class VM: @unchecked Sendable {
     /// Returns true if dispatched to a function (IP already set), false if result pushed and IP needs advancing.
     @discardableResult
     private func callMethod(_ name: String, argCount: Int) throws -> Bool {
-        // Collect args (they're above the receiver on the stack)
         var args: [Value] = []
         args.reserveCapacity(argCount)
         for _ in 0..<argCount { args.append(stack.pop()) }
         args.reverse()
         let receiver = stack.pop()
 
-        let result: Value
-        switch receiver {
-        case .array(var arr):
-            switch name {
-            case "append":
-                guard let elem = args.first else { throw InterpreterError.wrongArgumentCount(expected: 1, got: 0, at: loc()) }
-                arr.append(elem)
-                // Mutating method — need to write back. For now push the modified array as result.
-                // The caller needs to handle the mutation. Push modified array.
-                result = .array(arr)
-            case "contains":
-                guard let elem = args.first else { throw InterpreterError.wrongArgumentCount(expected: 1, got: 0, at: loc()) }
-                if case .closure(_) = elem {
-                    // contains(where:) with predicate
-                    var found = false
-                    for item in arr {
-                        let res = try invokeValue(elem, args: [item])
-                        if case .bool(true) = res { found = true; break }
-                    }
-                    result = .bool(found)
-                } else {
-                    result = .bool(arr.contains(elem))
-                }
-            case "reversed":
-                result = .array(arr.reversed())
-            case "removeLast":
-                _ = arr.popLast()
-                result = .array(arr)
-            case "remove":
-                guard case .int(let idx) = args.first, idx >= 0 && idx < arr.count else {
-                    result = .array(arr); break
-                }
-                arr.remove(at: idx)
-                result = .array(arr)
-            case "sorted":
-                if let comparator = args.first {
-                    // Sort with custom comparator closure
-                    var mutableArr = arr
-                    // Simple bubble sort to use the comparator
-                    // comparator(a, b) returns true if a should come before b
-                    for i in 0..<mutableArr.count {
-                        for j in 0..<(mutableArr.count - 1 - i) {
-                            let cmpResult = try invokeValue(comparator, args: [mutableArr[j+1], mutableArr[j]])
-                            if case .bool(let shouldSwap) = cmpResult, shouldSwap {
-                                mutableArr.swapAt(j, j+1)
-                            }
-                        }
-                    }
-                    result = .array(mutableArr)
-                } else {
-                    // Simple sort for comparable value types
-                    // Check if elements have a user-defined < operator
-                    var useCustomCompare = false
-                    var customLessThan: Value? = nil
-                    if let first = arr.first, case .instance(let ref) = first {
-                        let opName = "\(ref.typeName).<"
-                        if let op = environment.getGlobal(opName) {
-                            useCustomCompare = true
-                            customLessThan = op
-                        }
-                    }
-                    if useCustomCompare, let lessThan = customLessThan {
-                        var mutableArr = arr
-                        for i in 0..<mutableArr.count {
-                            for j in 0..<(mutableArr.count - 1 - i) {
-                                let cmpResult = try invokeValue(lessThan, args: [mutableArr[j+1], mutableArr[j]])
-                                if case .bool(true) = cmpResult {
-                                    mutableArr.swapAt(j, j+1)
-                                }
-                            }
-                        }
-                        result = .array(mutableArr)
-                    } else {
-                        let sorted = arr.sorted { a, b in
-                            if let la = a.intValue, let lb = b.intValue { return la < lb }
-                            if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
-                            if case .string(let la) = a, case .string(let lb) = b { return la < lb }
-                            return false
-                        }
-                        result = .array(sorted)
-                    }
-                }
-            case "joined":
-                let sep = (args.first?.stringValue) ?? ""
-                result = .string(arr.compactMap { $0.stringValue }.joined(separator: sep))
-            case "map":
-                guard let closureVal = args.first else { result = .array([]); break }
-                var mapped: [Value] = []
-                for elem in arr {
-                    // Destructure array elements for multi-param closures (e.g., zip results)
-                    let callArgs: [Value]
-                    if case .closure(let ref) = closureVal, ref.function.parameters.count > 1,
-                       case .array(let pair) = elem {
-                        callArgs = pair
-                    } else {
-                        callArgs = [elem]
-                    }
-                    let r = try invokeValue(closureVal, args: callArgs)
-                    mapped.append(r)
-                }
-                result = .array(mapped)
-            case "filter":
-                guard let closureVal = args.first else { result = .array(arr); break }
-                var filtered: [Value] = []
-                for elem in arr {
-                    let r = try invokeValue(closureVal, args: [elem])
-                    if r.isTruthy { filtered.append(elem) }
-                }
-                result = .array(filtered)
-            case "forEach":
-                guard let closureVal = args.first else { result = .void; break }
-                for elem in arr { _ = try invokeValue(closureVal, args: [elem]) }
-                result = .void
-            case "reduce":
-                guard args.count >= 2 else { result = .nil_; break }
-                var accumulator = args[0]
-                let closureVal = args[1]
-                for elem in arr {
-                    accumulator = try invokeValue(closureVal, args: [accumulator, elem])
-                }
-                result = accumulator
-            case "enumerated":
-                // Returns array of (index, value) pairs as arrays
-                result = .array(arr.enumerated().map { .array([.int($0.offset), $0.element]) })
-            case "allSatisfy":
-                guard let predicate = args.first else { result = .bool(true); break }
-                var allMatch = true
-                for item in arr {
-                    let res = try invokeValue(predicate, args: [item])
-                    if case .bool(false) = res { allMatch = false; break }
-                }
-                result = .bool(allMatch)
-            case "compactMap":
-                guard let transform = args.first else { result = .array(arr); break }
-                var mapped: [Value] = []
-                for item in arr {
-                    let res = try invokeValue(transform, args: [item])
-                    if !res.isNil {
-                        if case .optional(let inner) = res, let v = inner { mapped.append(v) }
-                        else { mapped.append(res) }
-                    }
-                }
-                result = .array(mapped)
-            case "flatMap":
-                guard let transform = args.first else { result = .array(arr); break }
-                var mapped: [Value] = []
-                for item in arr {
-                    let res = try invokeValue(transform, args: [item])
-                    if case .array(let inner) = res { mapped.append(contentsOf: inner) }
-                    else { mapped.append(res) }
-                }
-                result = .array(mapped)
-            case "min":
-                if let comparator = args.first {
-                    var minVal = arr.first ?? .nil_
-                    for item in arr.dropFirst() {
-                        let res = try invokeValue(comparator, args: [item, minVal])
-                        if case .bool(true) = res { minVal = item }
-                    }
-                    result = .optional(minVal)
-                } else {
-                    let sorted = arr.sorted { a, b in
-                        if let la = a.intValue, let lb = b.intValue { return la < lb }
-                        if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
-                        return false
-                    }
-                    result = .optional(sorted.first)
-                }
-            case "max":
-                if let comparator = args.first {
-                    var maxVal = arr.first ?? .nil_
-                    for item in arr.dropFirst() {
-                        let res = try invokeValue(comparator, args: [maxVal, item])
-                        if case .bool(true) = res { maxVal = item }
-                    }
-                    result = .optional(maxVal)
-                } else {
-                    let sorted = arr.sorted { a, b in
-                        if let la = a.intValue, let lb = b.intValue { return la > lb }
-                        if let la = a.doubleValue, let lb = b.doubleValue { return la > lb }
-                        return false
-                    }
-                    result = .optional(sorted.first)
-                }
-            case "first":
-                if let predicate = args.first {
-                    // first(where:) — find first element matching predicate
-                    var found: Value?
-                    for item in arr {
-                        let res = try invokeValue(predicate, args: [item])
-                        if case .bool(true) = res { found = item; break }
-                    }
-                    result = .optional(found)
-                } else {
-                    result = .optional(arr.first)
-                }
-            case "last":
-                if let predicate = args.first {
-                    var found: Value?
-                    for item in arr.reversed() {
-                        let res = try invokeValue(predicate, args: [item])
-                        if case .bool(true) = res { found = item; break }
-                    }
-                    result = .optional(found)
-                } else {
-                    result = .optional(arr.last)
-                }
-            case "dropFirst":
-                let n = args.first?.intValue ?? 1
-                result = .array(Array(arr.dropFirst(n)))
-            case "dropLast":
-                let n = args.first?.intValue ?? 1
-                result = .array(Array(arr.dropLast(n)))
-            case "prefix":
-                let n = args.first?.intValue ?? 0
-                result = .array(Array(arr.prefix(n)))
-            case "suffix":
-                let n = args.first?.intValue ?? 0
-                result = .array(Array(arr.suffix(n)))
-            default:
-                // Check conformance-based methods
-                if let typeInfo = program.typeTable.first(where: { $0.name == "Array" }) {
-                    for conformance in typeInfo.conformances {
-                        let protoQualified = "\(conformance).\(name)"
-                        if let method = environment.getGlobal(protoQualified) {
-                            try stack.push(method)
-                            try stack.push(receiver)
-                            for arg in args { try stack.push(arg) }
-                            let retIP = ip + 4
-                            try callFunction(argCount: args.count + 1, returnIP: retIP)
-                            return true
-                        }
-                    }
-                }
-                // Check bridge registry
-                if let bridgeMethod = bridgeMethodLookup?("Array", name) {
-                    let bridgeResult = try bridgeMethod(receiver, args)
-                    try stack.push(bridgeResult)
-                    return false
-                }
-                throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
-            }
-        case .string(let s):
-            switch name {
-            case "uppercased": result = .string(s.uppercased())
-            case "lowercased": result = .string(s.lowercased())
-            case "hasPrefix":
-                guard case .string(let prefix) = args.first else { result = .bool(false); break }
-                result = .bool(s.hasPrefix(prefix))
-            case "hasSuffix":
-                guard case .string(let suffix) = args.first else { result = .bool(false); break }
-                result = .bool(s.hasSuffix(suffix))
-            case "contains":
-                guard case .string(let sub) = args.first else { result = .bool(false); break }
-                result = .bool(s.contains(sub))
-            case "replacingOccurrences":
-                guard args.count >= 2, case .string(let target) = args[0], case .string(let repl) = args[1] else {
-                    result = .string(s); break
-                }
-                result = .string(s.replacingOccurrences(of: target, with: repl))
-            case "split":
-                guard case .string(let sep) = args.first else { result = .array([]); break }
-                result = .array(s.split(separator: sep).map { .string(String($0)) })
-            case "trimmingCharacters":
-                result = .string(s.trimmingCharacters(in: .whitespacesAndNewlines))
-            case "reversed":
-                result = .array(s.reversed().map { .string(String($0)) })
-            default:
-                // Try type-qualified global lookup (extension methods)
-                let qualifiedName = "String.\(name)"
-                if let method = environment.getGlobal(qualifiedName) {
-                    try stack.push(method)
-                    try stack.push(receiver)
-                    for arg in args { try stack.push(arg) }
-                    let retIP = ip + 4
-                    try callFunction(argCount: args.count + 1, returnIP: retIP)
-                    return true
-                }
-                throw InterpreterError.undefinedMethod(name, on: "String", at: loc())
-            }
-        case .dictionary(var d):
-            switch name {
-            case "removeValue":
-                if case .string(let key) = args.first { d.removeValue(forKey: key) }
-                result = .dictionary(d)
-            case "compactMapValues":
-                // dict.compactMapValues { transform } — apply transform to each value, keep non-nil
-                guard let transform = args.first else { result = .dictionary(d); break }
-                var newDict: [String: Value] = [:]
-                for (key, value) in d {
-                    let mapped = try invokeValue(transform, args: [value])
-                    switch mapped {
-                    case .nil_, .optional(.none): continue
-                    case .optional(.some(let inner)): newDict[key] = inner
-                    default: newDict[key] = mapped
-                    }
-                }
-                result = .dictionary(newDict)
-            case "sorted":
-                // dict.sorted() returns array of [key, value] pairs
-                // dict.sorted { $0.value > $1.value } uses a comparator
-                let pairs: [Value] = d.map { key, value in
-                    .array([.string(key), value])
-                }
-                if let comparator = args.first {
-                    // Sort with custom comparator — expects (pair, pair) -> Bool
-                    var mutablePairs = pairs
-                    for i in 0..<mutablePairs.count {
-                        for j in 0..<(mutablePairs.count - 1 - i) {
-                            let cmpResult = try invokeValue(comparator, args: [mutablePairs[j], mutablePairs[j+1]])
-                            if case .bool(false) = cmpResult {
-                                mutablePairs.swapAt(j, j+1)
-                            }
-                        }
-                    }
-                    result = .array(mutablePairs)
-                } else {
-                    let sorted = pairs.sorted { a, b in
-                        guard case .array(let pa) = a, case .array(let pb) = b,
-                              case .string(let ka) = pa[0], case .string(let kb) = pb[0] else { return false }
-                        return ka < kb
-                    }
-                    result = .array(sorted)
-                }
-            default:
-                throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
-            }
-        case .optional(.some(let inner)):
-            // Check for Optional-specific methods first
-            switch name {
-            case "map":
-                guard let transform = args.first else { try stack.push(.nil_); return false }
-                let mapped = try invokeValue(transform, args: [inner])
-                try stack.push(.optional(mapped))
-                return false
-            case "flatMap":
-                guard let transform = args.first else { try stack.push(.nil_); return false }
-                let mapped = try invokeValue(transform, args: [inner])
-                // flatMap: if result is already optional, don't double-wrap
-                if case .optional = mapped { try stack.push(mapped) }
-                else if case .nil_ = mapped { try stack.push(.nil_) }
-                else { try stack.push(.optional(mapped)) }
-                return false
-            default:
-                // Optional chaining: unwrap and call method on inner value
-                try stack.push(inner)
-                for arg in args { try stack.push(arg) }
-                let handled = try callMethod(name, argCount: args.count)
-                if !handled {
-                    let methodResult = stack.pop()
-                    try stack.push(.optional(methodResult))
-                }
-                return handled
-            }
-
-        case .optional(.none), .nil_:
-            switch name {
-            case "map", "flatMap":
-                try stack.push(.nil_)
-                return false
-            default:
-                try stack.push(.nil_)
-                return false
-            }
-
-        case .range(let start, let end, let inclusive):
-            // Convert range to array and dispatch
-            let rangeEnd = inclusive ? end : end - 1
-            let arr = (start...rangeEnd).map { Value.int($0) }
-            // Re-dispatch as array method
-            try stack.push(.array(arr))
-            for arg in args { try stack.push(arg) }
-            // We need to manually call the array method
-            var arrayArgs: [Value] = []
-            for _ in 0..<args.count { arrayArgs.insert(stack.pop(), at: 0) }
-            let arrayReceiver = stack.pop()
-            // Re-enter method dispatch with array receiver
-            try stack.push(arrayReceiver)
-            for a in arrayArgs { try stack.push(a) }
-            var result2: [Value] = []
-            if case .array(let rangeArr) = arrayReceiver {
-                switch name {
-                case "map":
-                    guard let closureVal = args.first else { try stack.push(.array([])); return false }
-                    for elem in rangeArr { result2.append(try invokeValue(closureVal, args: [elem])) }
-                    // Clean up pushed values
-                    for _ in 0..<(args.count + 1) { _ = stack.pop() }
-                    try stack.push(.array(result2)); return false
-                case "filter":
-                    guard let closureVal = args.first else { try stack.push(.array([])); return false }
-                    for elem in rangeArr { if (try invokeValue(closureVal, args: [elem])).isTruthy { result2.append(elem) } }
-                    for _ in 0..<(args.count + 1) { _ = stack.pop() }
-                    try stack.push(.array(result2)); return false
-                case "reduce":
-                    guard args.count >= 2 else { break }
-                    var acc = args[0]; let fn = args[1]
-                    for elem in rangeArr { acc = try invokeValue(fn, args: [acc, elem]) }
-                    for _ in 0..<(args.count + 1) { _ = stack.pop() }
-                    try stack.push(acc); return false
-                default: break
-                }
-            }
-            // Clean up if we didn't handle it
-            for _ in 0..<(args.count + 1) { _ = stack.pop() }
-            throw InterpreterError.undefinedMethod(name, on: "Range", at: loc())
-
-        default:
-            // Try type-qualified method lookup
-            var lookupTypeName = receiver.typeName
-            // For closures that are type constructors, use the closure's function name as type
-            if case .closure(let ref) = receiver {
-                lookupTypeName = ref.function.name
-            } else if case .nativeFunction(let ref) = receiver {
-                lookupTypeName = ref.name
-            }
-            let qualifiedName = "\(lookupTypeName).\(name)"
-            if let method = environment.getGlobal(qualifiedName) {
-                let retIP = ip + 4
-                // Determine if this is an instance method (pass self) or static (no self)
-                // If the receiver is a type constructor (closure/nativeFunction), it's static
-                let isStaticCall: Bool
-                switch receiver {
-                case .closure, .nativeFunction: isStaticCall = true
-                default: isStaticCall = false
-                }
-                if !isStaticCall {
-                    // Instance method: pass self as first arg
-                    try stack.push(method)
-                    try stack.push(receiver)
-                    for arg in args { try stack.push(arg) }
-                    try callFunction(argCount: args.count + 1, returnIP: retIP)
-                } else {
-                    // Static method or type-level call: no self
-                    try stack.push(method)
-                    for arg in args { try stack.push(arg) }
-                    try callFunction(argCount: args.count, returnIP: retIP)
-                }
-                return true
-            }
-            // Fallback: check protocol/conformance chain for default implementations
-            if let typeInfo = program.typeTable.first(where: { $0.name == receiver.typeName }) {
-                for conformance in typeInfo.conformances {
-                    let protoQualified = "\(conformance).\(name)"
-                    if let method = environment.getGlobal(protoQualified) {
-                        try stack.push(method)
-                        try stack.push(receiver)
-                        for arg in args { try stack.push(arg) }
-                        let retIP = ip + 4
-                        try callFunction(argCount: args.count + 1, returnIP: retIP)
-                        return true
-                    }
-                }
-            }
-            // Fallback for host objects (bridge types): try "View.method" for SwiftUI modifiers.
-            // Bridge view types (Text, Image, etc.) all support View modifiers but aren't
-            // in the program's typeTable — they're registered on the generic "View" type.
-            if case .hostObject = receiver {
-                let viewQualified = "View.\(name)"
-                if let method = environment.getGlobal(viewQualified) {
-                    try stack.push(method)
-                    try stack.push(receiver)
-                    for arg in args { try stack.push(arg) }
-                    let retIP = ip + 4
-                    try callFunction(argCount: args.count + 1, returnIP: retIP)
-                    return true
-                }
-            }
-            // Last resort: check bridge registry
-            if let bridgeMethod = bridgeMethodLookup?(receiver.typeName, name) {
-                let bridgeResult = try bridgeMethod(receiver, args)
-                try stack.push(bridgeResult)
-                return false
-            }
-            // Also check "View" type for any hostObject (modifier dispatch)
-            if case .hostObject = receiver, let bridgeMethod = bridgeMethodLookup?("View", name) {
-                let bridgeResult = try bridgeMethod(receiver, args)
-                try stack.push(bridgeResult)
-                return false
-            }
-            throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
+        // 1. Check built-in method registry (Array, String, Dictionary, Range, Optional)
+        if let builtinImpl = builtinMethods.lookup(receiver.builtinTypeName, name) {
+            try stack.push(builtinImpl(self, receiver, args))
+            return false
         }
-        try stack.push(result)
-        return false
+
+        // 2. Optional handling
+        if case .optional(.some(let inner)) = receiver {
+            if let innerImpl = builtinMethods.lookup(inner.builtinTypeName, name) {
+                try stack.push(innerImpl(self, inner, args))
+                return false
+            }
+        } else if case .optional(.none) = receiver {
+            try stack.push(.nil_); return false
+        } else if case .nil_ = receiver {
+            try stack.push(.nil_); return false
+        }
+
+        // 3. Type-qualified global lookup (user-defined methods, extensions)
+        var lookupTypeName = receiver.typeName
+        if case .closure(let ref) = receiver { lookupTypeName = ref.function.name }
+        else if case .nativeFunction(let ref) = receiver { lookupTypeName = ref.name }
+        let qualifiedName = "\(lookupTypeName).\(name)"
+        if let method = environment.getGlobal(qualifiedName) {
+            let retIP = ip + 4
+            let isStaticCall: Bool
+            switch receiver { case .closure, .nativeFunction: isStaticCall = true; default: isStaticCall = false }
+            if !isStaticCall {
+                try stack.push(method); try stack.push(receiver)
+                for arg in args { try stack.push(arg) }
+                try callFunction(argCount: args.count + 1, returnIP: retIP)
+            } else {
+                try stack.push(method)
+                for arg in args { try stack.push(arg) }
+                try callFunction(argCount: args.count, returnIP: retIP)
+            }
+            return true
+        }
+        // 4. Conformance chain
+        if let typeInfo = program.typeTable.first(where: { $0.name == receiver.typeName }) {
+            for conformance in typeInfo.conformances {
+                if let method = environment.getGlobal("\(conformance).\(name)") {
+                    try stack.push(method); try stack.push(receiver)
+                    for arg in args { try stack.push(arg) }
+                    try callFunction(argCount: args.count + 1, returnIP: ip + 4)
+                    return true
+                }
+            }
+        }
+        // 5. Bridge dispatch
+        if let bridgeMethod = bridgeMethodLookup?(receiver.typeName, name) {
+            try stack.push(bridgeMethod(receiver, args)); return false
+        }
+        if case .hostObject = receiver, let bridgeMethod = bridgeMethodLookup?("View", name) {
+            try stack.push(bridgeMethod(receiver, args)); return false
+        }
+        // 6. Extension methods on built-in types (String.reversed2() etc.)
+        let extQualified = "\(receiver.builtinTypeName).\(name)"
+        if extQualified != qualifiedName, let method = environment.getGlobal(extQualified) {
+            try stack.push(method); try stack.push(receiver)
+            for arg in args { try stack.push(arg) }
+            try callFunction(argCount: args.count + 1, returnIP: ip + 4)
+            return true
+        }
+        throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
     }
 
     // MARK: - Property Access
