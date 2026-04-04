@@ -1179,6 +1179,20 @@ public final class VM: @unchecked Sendable {
                     }
                 }
             }
+            // Fallback for host objects (bridge types): try "View.method" for SwiftUI modifiers.
+            // Bridge view types (Text, Image, etc.) all support View modifiers but aren't
+            // in the program's typeTable — they're registered on the generic "View" type.
+            if case .hostObject = receiver {
+                let viewQualified = "View.\(name)"
+                if let method = environment.getGlobal(viewQualified) {
+                    try stack.push(method)
+                    try stack.push(receiver)
+                    for arg in args { try stack.push(arg) }
+                    let retIP = ip + 4
+                    try callFunction(argCount: args.count + 1, returnIP: retIP)
+                    return true
+                }
+            }
             throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
         }
         try stack.push(result)
