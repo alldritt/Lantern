@@ -1221,6 +1221,12 @@ public final class VM: @unchecked Sendable {
             if let getter = environment.getGlobal(getterName) {
                 return try invokeValue(getter, args: [value])
             }
+            // Fall back to global lookup — inside struct bodies, the compiler may
+            // emit getProperty for identifiers like Text, VStack that are actually
+            // global type constructors, not properties of self.
+            if let global = environment.getGlobal(name) {
+                return global
+            }
             throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
         case .enumCase(let ref):
             switch name {
