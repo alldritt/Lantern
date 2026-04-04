@@ -36,6 +36,9 @@ public final class Interpreter {
         self.compiler = BytecodeCompiler()
         self._debugger = Debugger(vm: vm, compiler: compiler)
         registerBuiltins()
+        #if canImport(SwiftUI)
+        registerSwiftUIBridge(on: bridge)
+        #endif
     }
 
     /// Register built-in functions (print, etc.) in the VM environment.
