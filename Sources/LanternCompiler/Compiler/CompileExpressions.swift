@@ -330,24 +330,25 @@ extension BytecodeCompiler {
             scopeTracker.declare(name: param, isMutable: false)
         }
 
-        // For single-expression closures, suppress the pop so the value stays for return
-        let isImplicitReturn = closure.body.statements.count == 1
-            && closure.body.statements.first is ExpressionStatementNode
-        if isImplicitReturn { suppressExpressionPop = true }
+        // Compile closure body. The last expression is implicitly returned
+        // (matching Swift semantics for closures without explicit return).
+        let stmts = closure.body.statements
+        let hasExplicitReturn = stmts.contains { $0 is ReturnStatementNode }
 
-        for stmt in closure.body.statements {
-            compileStatement(stmt)
+        for (i, stmt) in stmts.enumerated() {
+            let isLast = (i == stmts.count - 1)
+            if isLast && !hasExplicitReturn && stmt is ExpressionStatementNode {
+                // Last expression: compile without pop, then return the value
+                compileExpression((stmt as! ExpressionStatementNode).expression)
+                chunk.write(.return_)
+            } else {
+                compileStatement(stmt)
+            }
         }
-
-        suppressExpressionPop = false
 
         // Emit return if the body doesn't already end with one
         if chunk.bytecode.last != Opcode.return_.rawValue && chunk.bytecode.last != Opcode.returnVoid.rawValue {
-            if isImplicitReturn {
-                chunk.write(.return_) // expression value is on stack
-            } else {
-                chunk.write(.returnVoid)
-            }
+            chunk.write(.returnVoid)
         }
 
         _ = scopeTracker.popScope()
