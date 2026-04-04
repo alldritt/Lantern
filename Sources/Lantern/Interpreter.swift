@@ -41,6 +41,13 @@ public final class Interpreter {
         registerSwiftUIBridge(on: bridge)
         #endif
         registerBridgeTypesAsGlobals()
+        // Wire bridge dispatch into VM for runtime method/property lookup
+        vm.bridgeMethodLookup = { [weak bridge] typeName, selector in
+            bridge?.lookupMethod(typeName: typeName, selector: selector)
+        }
+        vm.bridgePropertyLookup = { [weak bridge] typeName, name in
+            bridge?.lookupProperty(typeName: typeName, name: name)?.getter
+        }
     }
 
     /// Copy bridge-registered type constructors and methods into the VM environment

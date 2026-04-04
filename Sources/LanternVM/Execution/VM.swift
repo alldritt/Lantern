@@ -42,6 +42,11 @@ public final class VM: @unchecked Sendable {
     /// SwiftUI context for @State/@Binding opcodes. Set during view body evaluation.
     public var swiftUIContext: SwiftUIContext?
 
+    /// Bridge registry for host type dispatch. Set by Interpreter.
+    public var bridgeMethodLookup: ((String, String) -> ((Value, [Value]) throws -> Value)?)?
+    /// Bridge property lookup. Set by Interpreter.
+    public var bridgePropertyLookup: ((String, String) -> ((Value) throws -> Value)?)?
+
     // MARK: - Init
 
     public init(maxCallDepth: Int = defaultMaxCallDepth, executionLimit: Int = defaultExecutionLimit) {
@@ -591,7 +596,9 @@ public final class VM: @unchecked Sendable {
         switch callee {
         case .nativeFunction(let native):
             var args: [Value] = []
-            for _ in 0..<argCount { args.insert(stack.pop(), at: 0) }
+            args.reserveCapacity(argCount)
+            for _ in 0..<argCount { args.append(stack.pop()) }
+            args.reverse()
             _ = stack.pop() // pop the function itself
             let result = try native.body(args)
             try stack.push(result)
@@ -664,9 +671,9 @@ public final class VM: @unchecked Sendable {
             return try native.body(args)
 
         case .closure(let ref):
-            // Save current execution state
+            // Save current execution state (save indices, not copies)
             let savedIP = ip
-            let savedCallStack = callStack
+            let savedCallDepth = callStack.count
             let savedStackTop = stack.count
             let savedState = state
             state = .running  // Ensure execution loop can run (may be .halted)
@@ -690,15 +697,13 @@ public final class VM: @unchecked Sendable {
             }
             ip = ref.function.bytecodeOffset
 
-            // Run until return (frame is popped)
-            let targetDepth = savedCallStack.count
-            var stepCount = 0
+            // Run until return (frame is popped back to saved depth)
+            let targetDepth = savedCallDepth
             while callStack.count > targetDepth {
                 guard ip < program.bytecode.count else { break }
                 guard let raw = readU8(at: ip), let opcode = Opcode(rawValue: raw) else { break }
-                stepCount += 1
                 executionCount += 1
-                if stepCount > 10000 || executionCount > executionLimit {
+                if executionCount > executionLimit {
                     throw InterpreterError.executionLimitExceeded(at: loc())
                 }
                 try execute(opcode)
@@ -709,9 +714,9 @@ public final class VM: @unchecked Sendable {
             // Grab the return value (return_ pushes it after truncating)
             let result = stack.count > savedStackTop ? stack.pop() : Value.void
 
-            // Restore state
+            // Restore state (truncate, don't copy back)
             stack.truncate(to: savedStackTop)
-            callStack = savedCallStack
+            while callStack.count > savedCallDepth { callStack.removeLast() }
             ip = savedIP
             state = savedState
 
@@ -729,7 +734,9 @@ public final class VM: @unchecked Sendable {
     private func callMethod(_ name: String, argCount: Int) throws -> Bool {
         // Collect args (they're above the receiver on the stack)
         var args: [Value] = []
-        for _ in 0..<argCount { args.insert(stack.pop(), at: 0) }
+        args.reserveCapacity(argCount)
+        for _ in 0..<argCount { args.append(stack.pop()) }
+        args.reverse()
         let receiver = stack.pop()
 
         let result: Value
@@ -952,7 +959,7 @@ public final class VM: @unchecked Sendable {
                 let n = args.first?.intValue ?? 0
                 result = .array(Array(arr.suffix(n)))
             default:
-                // Check conformance-based methods before giving up
+                // Check conformance-based methods
                 if let typeInfo = program.typeTable.first(where: { $0.name == "Array" }) {
                     for conformance in typeInfo.conformances {
                         let protoQualified = "\(conformance).\(name)"
@@ -965,6 +972,12 @@ public final class VM: @unchecked Sendable {
                             return true
                         }
                     }
+                }
+                // Check bridge registry
+                if let bridgeMethod = bridgeMethodLookup?("Array", name) {
+                    let bridgeResult = try bridgeMethod(receiver, args)
+                    try stack.push(bridgeResult)
+                    return false
                 }
                 throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
             }
@@ -1193,6 +1206,18 @@ public final class VM: @unchecked Sendable {
                     return true
                 }
             }
+            // Last resort: check bridge registry
+            if let bridgeMethod = bridgeMethodLookup?(receiver.typeName, name) {
+                let bridgeResult = try bridgeMethod(receiver, args)
+                try stack.push(bridgeResult)
+                return false
+            }
+            // Also check "View" type for any hostObject (modifier dispatch)
+            if case .hostObject = receiver, let bridgeMethod = bridgeMethodLookup?("View", name) {
+                let bridgeResult = try bridgeMethod(receiver, args)
+                try stack.push(bridgeResult)
+                return false
+            }
             throw InterpreterError.undefinedMethod(name, on: receiver.typeName, at: loc())
         }
         try stack.push(result)
@@ -1280,6 +1305,10 @@ public final class VM: @unchecked Sendable {
             let getterName = "\(value.typeName).__get_\(name)"
             if let getter = environment.getGlobal(getterName) {
                 return try invokeValue(getter, args: [value])
+            }
+            // Check bridge registry for property
+            if let bridgeGetter = bridgePropertyLookup?(value.typeName, name) {
+                return try bridgeGetter(value)
             }
             throw InterpreterError.undefinedProperty(name, on: value.typeName, at: loc())
         }

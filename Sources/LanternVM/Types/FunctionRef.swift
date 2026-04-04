@@ -126,31 +126,38 @@ public final class HostObjectRef: @unchecked Sendable {
 public final class InstanceRef: @unchecked Sendable {
     public let typeName: String
     public let kind: TypeKind
-    private var storage: [(name: String, value: Value)]
+    private var values: [Value]
+    private var nameIndex: [String: Int]
 
     public init(typeName: String, kind: TypeKind = .struct, properties: [(name: String, value: Value)] = []) {
         self.typeName = typeName
         self.kind = kind
-        self.storage = properties
+        self.values = properties.map(\.value)
+        self.nameIndex = Dictionary(uniqueKeysWithValues: properties.enumerated().map { ($1.name, $0) })
     }
 
     public func property(_ name: String) -> Value? {
-        storage.first(where: { $0.name == name })?.value
+        guard let idx = nameIndex[name] else { return nil }
+        return values[idx]
     }
 
     public func setProperty(_ name: String, _ value: Value) {
-        if let idx = storage.firstIndex(where: { $0.name == name }) {
-            storage[idx].value = value
+        if let idx = nameIndex[name] {
+            values[idx] = value
         } else {
-            storage.append((name: name, value: value))
+            nameIndex[name] = values.count
+            values.append(value)
         }
     }
 
-    public var propertyNames: [String] { storage.map(\.name) }
+    public var propertyNames: [String] {
+        nameIndex.sorted(by: { $0.value < $1.value }).map(\.key)
+    }
 
     /// Create a shallow copy (for struct value semantics).
     public func copy() -> InstanceRef {
-        InstanceRef(typeName: typeName, kind: kind, properties: storage)
+        let props = nameIndex.sorted(by: { $0.value < $1.value }).map { (name: $0.key, value: values[$0.value]) }
+        return InstanceRef(typeName: typeName, kind: kind, properties: props)
     }
 }
 

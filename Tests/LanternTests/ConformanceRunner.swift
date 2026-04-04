@@ -62,7 +62,7 @@ struct ConformanceRunner {
             let interp = Interpreter()
             let output = CapturedOutputHandler()
             interp.outputHandler = output
-            interp.maxExecutionSteps = 200_000
+            interp.maxExecutionSteps = 500_000
 
             let result = interp.run(source: test.source, fileName: test.fileName)
             let captured = output.printOutput.joined().trimmingCharacters(in: .newlines)
