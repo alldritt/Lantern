@@ -965,29 +965,212 @@ The compiler includes six optimization passes that transform the AST before byte
 
 The optimizer iterates until convergence (up to 3 passes by default).
 
+## SwiftUI Bridge Guide
+
+The SwiftUI bridge connects interpreted Swift view definitions to native SwiftUI rendering. Interpreted code writes real Swift — `Text("Hello")`, `VStack { ... }`, `Button("Tap") { ... }` — and the bridge constructs real SwiftUI views at runtime.
+
+### How It Works
+
+```
+Interpreted Swift source
+    │
+    ▼
+Compiler (detects View conformance, @State properties)
+    │  emits stateGet/stateSet opcodes for @State
+    │  emits normal bytecode for body computed property
+    ▼
+CompiledProgram
+    │
+    ▼
+Interpreter.execute(program:)
+    │  registers type constructors (Text, VStack, Button, ...)
+    │  via BridgeRegistry → VM globals
+    ▼
+Interpreter.createInstance(typeName: "MyView")
+    │  creates an InstanceRef for the view struct
+    ▼
+Interpreter.makeView(from: instance) → ViewStub
+    │  ViewStub is a native SwiftUI View
+    │  its body calls vm.invokeValue(getter, args: [self])
+    │  which evaluates the interpreted body computed property
+    │  returning AnyView trees built from bridge-registered types
+    ▼
+Native SwiftUI rendering
+```
+
+### Step-by-Step Usage
+
+**1. Define an interpreted view**
+
+```swift
+let source = """
+struct GreetingView: View {
+    var body: some View {
+        VStack {
+            Text("Hello from Lantern!")
+                .font(.title)
+                .padding()
+            Text("This view is interpreted")
+                .foregroundColor(.gray)
+        }
+    }
+}
+"""
+```
+
+**2. Compile and execute**
+
+```swift
+import Lantern
+import LanternSwiftUI
+
+let interpreter = Interpreter()
+
+// Compile the source — this parses, compiles to bytecode, and
+// registers the struct type with its body computed property
+let program = try interpreter.compile(source: source).get()
+
+// Execute the program — this runs top-level code and registers
+// type constructors (Text, VStack, etc.) in the VM environment
+try interpreter.execute(program: program).get()
+```
+
+**3. Create an instance and wrap in ViewStub**
+
+```swift
+// Create an interpreted instance of the view struct
+guard let instance = interpreter.createInstance(typeName: "GreetingView") else {
+    fatalError("GreetingView not found in compiled program")
+}
+
+// Wrap in a native SwiftUI view
+let lanternView = interpreter.makeView(from: instance)
+```
+
+**4. Embed in your SwiftUI hierarchy**
+
+```swift
+struct ContentView: View {
+    let lanternView: ViewStub
+
+    var body: some View {
+        NavigationStack {
+            lanternView
+                .navigationTitle("Lantern Preview")
+        }
+    }
+}
+```
+
+### @State and Reactivity
+
+When the compiler detects `@State` properties in a View struct, it emits `stateGet` and `stateSet` opcodes instead of normal property access. At runtime, these read and write through a `LanternStateStore` — an `ObservableObject` owned by the `ViewStub`'s `@StateObject`. When a `@State` value changes, SwiftUI's observation system triggers a re-render automatically.
+
+```swift
+let source = """
+struct CounterView: View {
+    @State var count = 0
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Count: \\(count)")
+            Button("Increment") {
+                count += 1
+            }
+        }
+    }
+}
+"""
+```
+
+The flow for a button tap:
+1. SwiftUI calls the native closure registered by the Button bridge
+2. The closure calls `vm.invokeValue(actionClosure, args: [])`
+3. The closure body executes `count += 1`, which emits `stateSet`
+4. `stateSet` writes to `LanternStateStore.values["count"]`
+5. `LanternStateStore` is an `ObservableObject` — `@Published` fires `objectWillChange`
+6. SwiftUI re-evaluates `ViewStub.body`, which re-invokes the interpreted `body` getter
+7. The new `count` value is read via `stateGet`, producing updated `Text`
+
+### Supported View Types
+
+| Type | Constructor | Notes |
+|------|------------|-------|
+| `Text` | `Text("string")` | String argument |
+| `Button` | `Button("title") { action }` | Title + closure, or two closures (action + label) |
+| `VStack` | `VStack { ... }` | Optional spacing argument |
+| `HStack` | `HStack { ... }` | Optional spacing argument |
+| `ZStack` | `ZStack { ... }` | |
+| `Spacer` | `Spacer()` | Optional minLength |
+| `Divider` | `Divider()` | |
+| `Image` | `Image(systemName: "star")` | SF Symbols |
+| `Label` | `Label("title", systemImage: "star")` | |
+| `ProgressView` | `ProgressView()` | Optional value |
+| `Color` | `Color.red` / `Color(r, g, b)` | Named colors + RGB |
+| `ScrollView` | `ScrollView { ... }` | |
+| `List` | `List { ... }` | |
+| `NavigationStack` | `NavigationStack { ... }` | |
+
+### Supported Modifiers
+
+Applied via the `ModifierApplicator` through bridge method dispatch:
+
+**Layout:** `.padding()`, `.frame(width:height:)`, `.offset(x:y:)`, `.fixedSize()`
+
+**Typography:** `.font(.title)`, `.bold()`, `.italic()`, `.underline()`, `.lineLimit(n)`
+
+**Appearance:** `.foregroundColor(.red)`, `.foregroundStyle(.blue)`, `.background(.green)`, `.opacity(0.5)`, `.cornerRadius(10)`, `.shadow(radius: 5)`, `.border(.black, width: 1)`
+
+**Transforms:** `.rotationEffect(degrees)`, `.scaleEffect(scale)`
+
+**Visibility:** `.hidden()`, `.disabled(true)`
+
+**Navigation:** `.navigationTitle("Title")`
+
+### Architecture
+
+The bridge uses three layers:
+
+1. **BridgeRegistry** — Single source of truth for all SwiftUI type constructors and modifier methods. Populated by `registerSwiftUIBridge(on:vm:)` during Interpreter init.
+
+2. **VM Dispatch** — When interpreted code calls `Text("Hello")`, the compiler emits a `CALL` opcode. The VM finds `Text` as a `NativeFunctionRef` global (registered from the bridge). The native function creates an `AnyView(Text("Hello"))` wrapped in a `ViewBox` inside a `HostObjectRef`. Modifier calls like `.padding()` dispatch through `callMethod` → bridge lookup → `ModifierApplicator`.
+
+3. **ViewStub** — A native `SwiftUI.View` that evaluates the interpreted `body` computed property on each render. It manages `@State` through `LanternStateStore` and converts the returned `Value` (containing `HostObjectRef(ViewBox)`) back to `AnyView`.
+
+### Limitations
+
+- **No generics** — `ForEach`, `Picker(selection:)`, and other generic views are not yet supported
+- **No `$binding` syntax** — `Toggle(isOn: $flag)` requires explicit binding creation (not yet implemented)
+- **No `@Binding`/`@ObservedObject`/`@EnvironmentObject`** — only `@State` is functional
+- **No `sheet`/`alert`/`fullScreenCover`** — presentation modifiers need binding support
+- **No `onAppear`/`onChange`/`task`** — lifecycle modifiers need closure wrapping integration
+- **No conditional views** — `if`/`else` in view builders doesn't yet produce conditional SwiftUI content
+- **View descriptor tree** — `currentViewDescriptor` is not yet populated during evaluation
+
 ## Project Status
 
-**Conformance: 321/351 tests passing (91.5%)** — 7 fixture files at 100%.
+**Conformance: 349/355 tests passing (98.3%)** — 12 of 16 fixture files at 100%.
 
 The interpreter handles:
 
-- Arithmetic, comparison, logical, and string operators with correct precedence
-- `let`/`var` declarations, `if`/`else`/`guard`, `while`, `for-in` (ranges and arrays)
-- Functions with recursion, default parameters, and nested calls
-- Closures with `$0` shorthand, captures from enclosing scope, trailing closures
-- Arrays with `map`, `filter`, `reduce`, `forEach`, `sorted`, `contains`, mutation
-- Dictionaries with subscript read/write, iteration, Int/String keys
-- Optionals with `if let`, `guard let`, nil coalescing (`??`), optional chaining, `map`/`flatMap`
+- Arithmetic, comparison, logical, bitwise, and string operators with correct precedence
+- `let`/`var` declarations (including deferred init), `if`/`else`/`guard`, `while`/`while let`, `for-in` (ranges, arrays, dictionaries)
+- Functions with recursion, default parameters, closures with `$0` shorthand, capture lists (`[x]`), and mutable capture sharing
+- Arrays with `map`, `filter`, `reduce`, `flatMap`, `compactMap`, `sorted` (with custom comparator and user-defined `<`), `contains`, `enumerated`, `prefix`, `suffix`, `allSatisfy`, mutation
+- Dictionaries with subscript read/write, default subscript (`dict[key, default: 0]`), iteration, `sorted`, `compactMapValues`
+- Optionals with `if let`, `guard let`, `while let`, nil coalescing (`??`), optional chaining, `map`/`flatMap`, pattern matching (`.some`/`.none`)
 - Structs with memberwise init, custom init, methods, computed properties (get/set), static members, value semantics
-- Classes with custom init, methods, computed properties, reference semantics, static members
-- Enums with switch matching, raw values (Int/String), computed properties, methods
-- Protocols with conformance, extensions on built-in types, computed properties via extensions
-- Error handling with `do`/`try`/`catch`, `throw`, `defer` (including LIFO ordering)
+- Classes with custom init, methods, computed properties, reference semantics, static members, identity operators (`===`/`!==`)
+- Enums with switch matching (including range patterns, where clauses, tuple patterns, associated value destructuring), raw values (Int/String), computed properties, methods
+- Protocols with conformance, protocol extension default methods, extensions on built-in types
+- Error handling with `do`/`try`/`catch`, `throw`, `try?`/`try!`, `defer` (LIFO ordering)
 - Higher-order functions: `map`, `filter`, `reduce`, `zip`, operator function references (`+`, `*`)
+- Tuple expressions, destructuring in `let`/`for-in`, implicit member access (`.loading`, `.success(42)`)
 - String interpolation, escape sequences, `CustomStringConvertible`
-- `print()`, `String()`, `Int()`, `Double()`, `abs()`, `min()`, `max()`, `Array()`, `zip()`
+- `print()`, `String()`, `Int()`, `Double()`, `abs()`, `min()`, `max()`, `Array()`, `zip()`, `Result`
+- Int-to-Double parameter coercion, generic specialization stripping (`Stack<Int>` works)
 
-Remaining work: mutable closure captures, enum associated value destructuring, generics, tuple patterns, and the SwiftUI bridge.
+Remaining: 3 performance timeouts (fibonacci, custom_higher_order, stack_implementation), nested subscript mutation (`result[col].append(val)`), static property self-reference, optional assignment wrapping.
 
 ## License
 
