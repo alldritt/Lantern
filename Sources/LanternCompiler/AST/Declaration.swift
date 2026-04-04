@@ -195,13 +195,15 @@ public final class PropertyNode: DeclarationNode {
     public let isStatic: Bool
     public let typeAnnotation: String?
     public var initializer: ExpressionNode?
+    public let attributes: [String]
 
-    public init(name: String, isMutable: Bool, isStatic: Bool = false, typeAnnotation: String? = nil, initializer: ExpressionNode? = nil, location: SourceLocation) {
+    public init(name: String, isMutable: Bool, isStatic: Bool = false, typeAnnotation: String? = nil, initializer: ExpressionNode? = nil, attributes: [String] = [], location: SourceLocation) {
         self.name = name
         self.isMutable = isMutable
         self.isStatic = isStatic
         self.typeAnnotation = typeAnnotation
         self.initializer = initializer
+        self.attributes = attributes
         super.init(location: location)
     }
 

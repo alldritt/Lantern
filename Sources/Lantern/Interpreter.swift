@@ -2,6 +2,9 @@ import LanternVM
 import LanternCompiler
 import LanternDebugger
 import LanternBridge
+#if canImport(SwiftUI)
+import LanternSwiftUI
+#endif
 
 /// The main entry point for the Lantern interpreter.
 /// Compiles and executes Swift source, manages the bridge registry,
@@ -134,8 +137,15 @@ public final class Interpreter {
         }
         vm.environment.setGlobal("max", value: .nativeFunction(maxFn))
 
-        // Array() — convert to array
-        let arrayFn = NativeFunctionRef(name: "Array", arity: 1) { args in
+        // Array() — convert to array or Array(repeating:count:)
+        let arrayFn = NativeFunctionRef(name: "Array", arity: -1) { args in
+            if args.count == 2 {
+                // Array(repeating: value, count: n)
+                let value = args[0]
+                if let count = args[1].intValue {
+                    return .array(Swift.Array(repeating: value, count: count))
+                }
+            }
             guard let arg = args.first else { return .array([]) }
             if case .array(let a) = arg { return .array(a) }
             if case .string(let s) = arg { return .array(s.map { .string(String($0)) }) }
@@ -176,6 +186,17 @@ public final class Interpreter {
             return .nil_
         }
         vm.environment.setGlobal("*", value: .nativeFunction(mulOpFn))
+
+        // Result type constructors
+        let successFn = NativeFunctionRef(name: "Result.success", arity: 1) { args in
+            return .enumCase(EnumCaseRef(typeName: "Result", caseName: "success", associatedValues: args))
+        }
+        vm.environment.setGlobal("Result.success", value: .nativeFunction(successFn))
+
+        let failureFn = NativeFunctionRef(name: "Result.failure", arity: 1) { args in
+            return .enumCase(EnumCaseRef(typeName: "Result", caseName: "failure", associatedValues: args))
+        }
+        vm.environment.setGlobal("Result.failure", value: .nativeFunction(failureFn))
     }
 
     /// Compile Swift source into a compiled program.
@@ -275,4 +296,37 @@ public final class Interpreter {
     public func reset() {
         vm.load(CompiledProgram())
     }
+
+    // MARK: - SwiftUI Support
+
+    /// Create an instance of a view type defined in the last compiled program.
+    public func createInstance(typeName: String, arguments: [Value] = []) -> InstanceRef? {
+        // Try to find a constructor for this type
+        let constructorName = "\(typeName).__init"
+        if let constructor = vm.environment.getGlobal(constructorName) {
+            let result = try? vm.invokeValue(constructor, args: arguments)
+            if case .instance(let ref) = result { return ref }
+        }
+        // Try memberwise init
+        if let typeInfo = vm.currentProgram?.typeTable.first(where: { $0.name == typeName }) {
+            let instance = InstanceRef(typeName: typeName, kind: typeInfo.kind)
+            for prop in typeInfo.properties where !prop.isComputed && !prop.isStatic {
+                instance.setProperty(prop.name, .nil_)
+            }
+            return instance
+        }
+        return nil
+    }
+
+    #if canImport(SwiftUI)
+    /// Create a native SwiftUI view from an interpreted view instance.
+    public func makeView(from instance: InstanceRef) -> ViewStub {
+        ViewStub(vm: vm, instance: instance)
+    }
+
+    /// The current view descriptor tree from the last view body evaluation.
+    public var currentViewDescriptor: ViewDescriptor? {
+        nil // TODO: Track via ViewDescriptorBuilder during evaluation
+    }
+    #endif
 }

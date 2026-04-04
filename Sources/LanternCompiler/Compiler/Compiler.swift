@@ -16,6 +16,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
     private var continueTargets: [Int] = []
     private var loopDepth = 0
     private var compilingMethodOfType: String? = nil
+    /// Set of @State property names for the current View type being compiled
+    private var statePropertyNames: Set<String> = []
+    /// Whether the current type conforms to View (enables @State opcode emission)
+    private var isCompilingViewType: Bool = false
     /// Outer scope locals available for capture (set during closure compilation)
     private var outerLocals: [ScopeTracker.Local] = []
     /// Captured variable names in order (built during closure body compilation)
@@ -137,6 +141,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 symbolTable.register(varDecl.name, kind: .global(isMutable: varDecl.isMutable), location: varDecl.location)
             }
         }
+        // Register built-in enum cases for Result type
+        let builtinLoc = SourceLocation(fileIndex: 0, line: 0, column: 0)
+        symbolTable.register("success", kind: .enumCase(typeName: "Result"), location: builtinLoc)
+        symbolTable.register("failure", kind: .enumCase(typeName: "Result"), location: builtinLoc)
     }
 
     // MARK: - Statement Compilation
@@ -264,6 +272,48 @@ public final class BytecodeCompiler: @unchecked Sendable {
 
     private func compileVariableDeclaration(_ decl: VariableDeclarationNode) {
         emitLocation(decl.location)
+
+        // Tuple destructuring: let (a, b) = expr
+        let varName = decl.name
+        if varName.hasPrefix("(") && varName.hasSuffix(")"), let initExpr = decl.initializer {
+            let inner = String(varName.dropFirst().dropLast())
+            let parts = inner.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+
+            // Compile the initializer once, store in temp
+            compileExpression(initExpr)
+
+            if scopeTracker.currentDepth == 0 {
+                // Global scope: store temp, then extract each element
+                let tempName = "__tuple_\(decl.location.line)"
+                let tempIdx = chunk.constantPool.addString(tempName)
+                chunk.write(.dup)
+                Instruction.storeGlobal(tempIdx, into: &chunk)
+                chunk.write(.pop) // pop the dup we kept on stack
+
+                for (i, part) in parts.enumerated() {
+                    if part == "_" { continue }
+                    Instruction.loadGlobal(tempIdx, into: &chunk)
+                    Instruction.constInt(i, into: &chunk)
+                    chunk.write(.getIndex)
+                    let nameIdx = chunk.constantPool.addString(part)
+                    Instruction.storeGlobal(nameIdx, into: &chunk)
+                    symbolTable.register(part, kind: .global(isMutable: decl.isMutable), location: decl.location)
+                }
+            } else {
+                // Local scope: store temp, extract each element
+                let tempSlot = scopeTracker.declare(name: "__tuple_\(decl.location.line)", isMutable: false)
+                Instruction.storeLocal(tempSlot, into: &chunk)
+                for (i, part) in parts.enumerated() {
+                    if part == "_" { continue }
+                    Instruction.loadLocal(tempSlot, into: &chunk)
+                    Instruction.constInt(i, into: &chunk)
+                    chunk.write(.getIndex)
+                    let slot = scopeTracker.declare(name: part, isMutable: decl.isMutable)
+                    Instruction.storeLocal(slot, into: &chunk)
+                }
+            }
+            return
+        }
 
         if let initializer = decl.initializer {
             compileExpression(initializer)
@@ -782,6 +832,79 @@ public final class BytecodeCompiler: @unchecked Sendable {
                         let jump = Instruction.jumpIfTrue(into: &chunk)
                         caseJumps.append(jump)
                         continue // bindings extracted below after match confirmed
+                    case .range(let startExpr, let endExpr, let isClosed):
+                        // subject >= start && subject < end (or <= for closed)
+                        // dup'd subject is on stack
+                        chunk.write(.dup) // dup again so we have two copies for two comparisons
+                        compileExpression(startExpr)
+                        chunk.write(.gte) // subject >= start
+                        // Now swap: we need subject for second comparison
+                        // subject is under the bool result. We still have one dup on stack
+                        let startCheck = Instruction.jumpIfFalse(into: &chunk)
+                        // Pop the dup'd subject from .dup at top of loop, use the other
+                        compileExpression(endExpr)
+                        if isClosed {
+                            chunk.write(.lte) // subject <= end
+                        } else {
+                            chunk.write(.lt) // subject < end
+                        }
+                        let jump2 = Instruction.jumpIfTrue(into: &chunk)
+                        caseJumps.append(jump2)
+                        // Jump here if start check failed — skip
+                        let skipRange = Instruction.jump(into: &chunk)
+                        Instruction.patchJump(at: startCheck, in: &chunk)
+                        chunk.write(.pop) // pop the remaining dup'd subject
+                        Instruction.patchJump(at: skipRange, in: &chunk)
+                        continue
+                    case .binding(_, _):
+                        // Value binding always matches — the where clause is checked after
+                        chunk.write(.pop) // pop the dup
+                        Instruction.constBool(true, into: &chunk)
+                        let jump = Instruction.jumpIfTrue(into: &chunk)
+                        caseJumps.append(jump)
+                        continue
+                    case .tuple(let subPatterns):
+                        // Element-wise comparison: subject[0] == pattern[0] && subject[1] == pattern[1] ...
+                        var elemFailJumps: [Int] = []
+                        for (i, subPat) in subPatterns.enumerated() {
+                            if case .wildcard = subPat { continue }
+                            chunk.write(.dup) // dup the dup'd subject
+                            Instruction.constInt(i, into: &chunk)
+                            chunk.write(.getIndex) // get element i
+                            if case .expression(let expr) = subPat {
+                                // Handle implicit member access for enum matching
+                                if let member = expr as? MemberAccessNode, member.object is SelfNode {
+                                    var found = false
+                                    for typeInfo in typeDebugInfo where typeInfo.kind == .enum {
+                                        if typeInfo.properties.contains(where: { $0.name == member.member }) {
+                                            let qualifiedName = "\(typeInfo.name).\(member.member)"
+                                            let nameIndex = chunk.constantPool.addString(qualifiedName)
+                                            Instruction.loadGlobal(nameIndex, into: &chunk)
+                                            found = true
+                                            break
+                                        }
+                                    }
+                                    if !found { compileExpression(expr) }
+                                } else {
+                                    compileExpression(expr)
+                                }
+                            } else if case .identifier(let name) = subPat {
+                                Instruction.constString(name, into: &chunk)
+                            }
+                            chunk.write(.eq)
+                            let fail = Instruction.jumpIfFalse(into: &chunk)
+                            elemFailJumps.append(fail)
+                        }
+                        // All elements matched — pop dup'd subject and jump to body
+                        chunk.write(.pop) // pop the dup'd subject
+                        Instruction.constBool(true, into: &chunk)
+                        let tupleJump = Instruction.jumpIfTrue(into: &chunk)
+                        caseJumps.append(tupleJump)
+                        // Patch failure jumps — they skip to after this pattern
+                        for fj in elemFailJumps {
+                            Instruction.patchJump(at: fj, in: &chunk)
+                        }
+                        continue
                     }
                     chunk.write(.eq)
                     let jump = Instruction.jumpIfTrue(into: &chunk)
@@ -794,13 +917,68 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     Instruction.patchJump(at: cj, in: &chunk)
                 }
 
+                // Check for value binding pattern: `case let x where condition`
+                let valueBinding = switchCase.patterns.compactMap { p -> (String, ExpressionNode?)? in
+                    if case .binding(let name, let whereExpr) = p { return (name, whereExpr) }
+                    return nil
+                }.first
+
                 // Extract enum bindings if this is an enumCase pattern
                 let enumBindings = switchCase.patterns.compactMap { p -> (String, [String])? in
                     if case .enumCase(let cn, let binds) = p { return (cn, binds) }
                     return nil
                 }.first
 
-                if let (_, bindings) = enumBindings, !bindings.isEmpty {
+                if let (bindingName, whereExpr) = valueBinding {
+                    if let whereExpr = whereExpr {
+                        // case let x where condition:
+                        // The subject is on the stack. We need x to be the subject.
+                        // Approach: temporarily make x resolvable as a global pointing to the subject,
+                        // or more simply: store subject in a temp global, bind x, eval where.
+                        // Simplest: push a scope, store dup'd subject into binding, eval where.
+
+                        // We need the binding variable accessible during where clause compilation.
+                        // Use the stack: dup subject → store into a fresh local slot for x
+                        scopeTracker.pushScope()
+                        let slot = scopeTracker.declare(name: bindingName, isMutable: false)
+                        chunk.write(.dup) // dup subject for binding
+                        Instruction.storeLocal(slot, into: &chunk)
+
+                        // Compile where clause — x resolves to the local we just created
+                        compileExpression(whereExpr)
+                        let whereCheck = Instruction.jumpIfFalse(into: &chunk)
+
+                        // Save scope state before success path (so we can restore for failure path)
+                        let savedState = scopeTracker.saveFullState()
+
+                        // Where passed — pop subject, compile body, clean up scope
+                        chunk.write(.pop)
+                        compileBlock(switchCase.body)
+                        let removed = scopeTracker.popScope()
+                        for _ in removed { chunk.write(.pop) }
+                        let endJump = Instruction.jump(into: &chunk)
+                        endJumps.append(endJump)
+
+                        // Where failed — restore scope state and pop it cleanly
+                        Instruction.patchJump(at: whereCheck, in: &chunk)
+                        scopeTracker.restoreFullState(savedState)
+                        _ = scopeTracker.popScope()
+                        // At runtime, the binding local is on the stack — pop it
+                        // The subject remains on the stack for the next case
+                        // But wait: storeLocal wrote the dup'd subject to a slot, not pushed it
+                        // The dup pushed it, and storeLocal popped it from the stack to a slot
+                        // So the stack is: [subject] (same as before the binding)
+                        // No extra pop needed for the binding
+
+                        Instruction.patchJump(at: nextCase, in: &chunk)
+                        continue
+                    } else {
+                        chunk.write(.pop) // Pop the subject
+                        compileBlock(switchCase.body)
+                        let removed = scopeTracker.popScope()
+                        for _ in removed { chunk.write(.pop) }
+                    }
+                } else if let (_, bindings) = enumBindings, !bindings.isEmpty {
                     // Subject is still on stack — save it and extract associated values
                     scopeTracker.pushScope()
                     // Save subject to a temp local
@@ -963,6 +1141,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
         emitLocation(decl.location)
         let typeIndex = chunk.constantPool.addTypeName(decl.name)
 
+        // Detect View conformance and @State properties
+        let savedIsViewType = isCompilingViewType
+        let savedStateProps = statePropertyNames
+        isCompilingViewType = decl.conformances.contains("View")
+        statePropertyNames = []
+
         var properties: [PropertyInfo] = []
         for member in decl.members {
             if let prop = member as? VariableDeclarationNode {
@@ -971,13 +1155,20 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
+                // Track @State properties for SwiftUI opcode emission
+                if prop.attributes.contains("State") {
+                    statePropertyNames.insert(prop.name)
+                }
             } else if let prop = member as? PropertyNode, !prop.isStatic {
                 properties.append(PropertyInfo(
                     name: prop.name,
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
+                if prop.attributes.contains("State") {
+                    statePropertyNames.insert(prop.name)
                 }
+            }
         }
 
         // Compile methods and computed properties
@@ -1023,6 +1214,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 Instruction.storeGlobal(nameIndex, into: &chunk)
             }
         }
+
+        // Restore View type tracking state
+        isCompilingViewType = savedIsViewType
+        statePropertyNames = savedStateProps
     }
 
     private func compileClassDeclaration(_ decl: ClassDeclarationNode) {
@@ -1495,6 +1690,32 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 compileStatement(member)
             }
         }
+        // Record conformances from extension declarations
+        if !ext.conformances.isEmpty {
+            // Check if this type already has a TypeDebugInfo entry
+            if let idx = typeDebugInfo.firstIndex(where: { $0.name == typeName }) {
+                var info = typeDebugInfo[idx]
+                info = TypeDebugInfo(
+                    name: info.name,
+                    kind: info.kind,
+                    properties: info.properties,
+                    methods: info.methods,
+                    conformances: info.conformances + ext.conformances,
+                    sourceRange: info.sourceRange
+                )
+                typeDebugInfo[idx] = info
+            } else {
+                // Create a new entry for built-in types extended with conformances
+                typeDebugInfo.append(TypeDebugInfo(
+                    name: typeName,
+                    kind: .struct,
+                    properties: [],
+                    methods: [],
+                    conformances: ext.conformances,
+                    sourceRange: (start: ext.location, end: ext.location)
+                ))
+            }
+        }
     }
 
     // MARK: - Expression Compilation
@@ -1562,6 +1783,13 @@ public final class BytecodeCompiler: @unchecked Sendable {
             }
         } else if let call = expr as? FunctionCallNode {
             compileFunctionCall(call)
+        } else if let sub = expr as? SubscriptDefaultNode {
+            // dict[key, default: value] — getIndex then nil-coalesce
+            compileExpression(sub.object)
+            compileExpression(sub.index)
+            chunk.write(.getIndex)
+            compileExpression(sub.defaultValue)
+            chunk.write(.nilCoalesce)
         } else if let sub = expr as? SubscriptNode {
             compileExpression(sub.object)
             compileExpression(sub.index)
@@ -1647,29 +1875,33 @@ public final class BytecodeCompiler: @unchecked Sendable {
         // Check locals first (inner to outer scope)
         if let local = scopeTracker.resolve(ident.name) {
             Instruction.loadLocal(local.slot, into: &chunk)
-        } else if !outerLocals.isEmpty, let outerLocal = outerLocals.first(where: { $0.name == ident.name }) {
+        } else if let captureIdx = capturedNames.firstIndex(of: ident.name) {
+            // Already in capture list (e.g., from explicit [x] capture)
+            chunk.write(.loadCapture)
+            chunk.writeU16(UInt16(captureIdx))
+        } else if !outerLocals.isEmpty, let _ = outerLocals.first(where: { $0.name == ident.name }) {
             // Captured variable from enclosing scope
-            if let captureIdx = capturedNames.firstIndex(of: ident.name) {
-                chunk.write(.loadCapture)
-                chunk.writeU16(UInt16(captureIdx))
-            } else {
-                capturedNames.append(ident.name)
-                chunk.write(.loadCapture)
-                chunk.writeU16(UInt16(capturedNames.count - 1))
-            }
-            _ = outerLocal // suppress warning
+            capturedNames.append(ident.name)
+            chunk.write(.loadCapture)
+            chunk.writeU16(UInt16(capturedNames.count - 1))
         } else if compilingMethodOfType != nil
                     && symbolTable.lookup(ident.name) == nil
                     && !isKnownGlobal(ident.name) {
-            // Inside a type method body — truly unresolved identifiers are implicit self.property
             // Inside a type method body — unresolved identifiers are implicit self.property
-            if let selfLocal = scopeTracker.resolve("self") {
-                Instruction.loadLocal(selfLocal.slot, into: &chunk)
+            // For @State properties in View types, use stateGet instead
+            if isCompilingViewType && statePropertyNames.contains(ident.name) {
+                let nameIndex = chunk.constantPool.addString(ident.name)
+                chunk.write(.stateGet)
+                chunk.writeU16(nameIndex)
             } else {
-                Instruction.loadLocal(0, into: &chunk)
+                if let selfLocal = scopeTracker.resolve("self") {
+                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                } else {
+                    Instruction.loadLocal(0, into: &chunk)
+                }
+                let nameIndex = chunk.constantPool.addPropertyName(ident.name)
+                Instruction.getProperty(nameIndex, into: &chunk)
             }
-            let nameIndex = chunk.constantPool.addPropertyName(ident.name)
-            Instruction.getProperty(nameIndex, into: &chunk)
         } else {
             // Global or unresolved — load from environment
             let nameIndex = chunk.constantPool.addString(ident.name)
@@ -1754,6 +1986,14 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 Instruction.loadGlobal(nameIndex, into: &chunk)
                 for arg in call.arguments { compileExpression(arg.value) }
                 Instruction.call(argCount: UInt8(call.arguments.count), into: &chunk)
+            } else if memberAccess.object is SelfNode,
+                      case .enumCase(let typeName) = symbolTable.lookup(memberAccess.member)?.kind {
+                // Implicit member call like `.loaded(42)` — enum constructor
+                let qualifiedName = "\(typeName).\(memberAccess.member)"
+                let nameIndex = chunk.constantPool.addString(qualifiedName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+                for arg in call.arguments { compileExpression(arg.value) }
+                Instruction.call(argCount: UInt8(call.arguments.count), into: &chunk)
             } else {
                 compileExpression(memberAccess.object)
                 for arg in call.arguments { compileExpression(arg.value) }
@@ -1786,6 +2026,14 @@ public final class BytecodeCompiler: @unchecked Sendable {
         }
         outerLocals = allOuterLocals
         capturedNames = []
+
+        // Pre-seed captures from explicit capture list [x, y, ...]
+        // These variables are captured by VALUE at closure creation time
+        for capName in closure.captureList {
+            if !capturedNames.contains(capName) {
+                capturedNames.append(capName)
+            }
+        }
 
         // Jump over the closure body
         let jumpOver = Instruction.jump(into: &chunk)
@@ -1878,16 +2126,25 @@ public final class BytecodeCompiler: @unchecked Sendable {
                 && symbolTable.lookup(ident.name)?.kind == nil
 
             if isImplicitSelfProperty {
-                // setProperty expects stack: [self, value] — pops val (top), then inst
-                if let selfLocal = scopeTracker.resolve("self") {
-                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                // For @State properties in View types, use stateSet
+                if isCompilingViewType && statePropertyNames.contains(ident.name) {
+                    compileExpression(assign.value)
+                    let nameIndex = chunk.constantPool.addString(ident.name)
+                    chunk.write(.stateSet)
+                    chunk.writeU16(nameIndex)
+                    chunk.write(.constNil)
                 } else {
-                    Instruction.loadLocal(0, into: &chunk)
+                    // setProperty expects stack: [self, value] — pops val (top), then inst
+                    if let selfLocal = scopeTracker.resolve("self") {
+                        Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                    } else {
+                        Instruction.loadLocal(0, into: &chunk)
+                    }
+                    compileExpression(assign.value)
+                    let nameIndex = chunk.constantPool.addPropertyName(ident.name)
+                    Instruction.setProperty(nameIndex, into: &chunk)
+                    chunk.write(.constNil) // assignment result for pop
                 }
-                compileExpression(assign.value)
-                let nameIndex = chunk.constantPool.addPropertyName(ident.name)
-                Instruction.setProperty(nameIndex, into: &chunk)
-                chunk.write(.constNil) // assignment result for pop
             } else {
                 compileExpression(assign.value)
                 if let local = scopeTracker.resolve(ident.name) {
@@ -1919,6 +2176,21 @@ public final class BytecodeCompiler: @unchecked Sendable {
             let nameIndex = chunk.constantPool.addPropertyName(member.member)
             Instruction.setProperty(nameIndex, into: &chunk)
             chunk.write(.constNil) // assignment result for pop
+        } else if let sub = assign.target as? SubscriptDefaultNode {
+            // dict[key, default: 0] += 1 — treat as subscript assignment
+            compileExpression(sub.object)
+            compileExpression(sub.index)
+            compileExpression(assign.value)
+            chunk.write(.setIndex)
+            if let objIdent = sub.object as? IdentifierNode {
+                if let local = scopeTracker.resolve(objIdent.name) {
+                    Instruction.storeLocal(local.slot, into: &chunk)
+                } else {
+                    let nameIndex = chunk.constantPool.addString(objIdent.name)
+                    Instruction.storeGlobal(nameIndex, into: &chunk)
+                }
+            }
+            chunk.write(.constNil)
         } else if let sub = assign.target as? SubscriptNode {
             // setIndex expects stack: [collection, index, value] — pops val, idx, col
             compileExpression(sub.object)
@@ -1933,6 +2205,30 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     let nameIndex = chunk.constantPool.addString(objIdent.name)
                     Instruction.storeGlobal(nameIndex, into: &chunk)
                 }
+            } else if let memberAccess = sub.object as? MemberAccessNode,
+                      let rootIdent = memberAccess.object as? IdentifierNode {
+                // obj.prop[key] = value — store modified collection back to obj.prop
+                // Stack: [modified_collection]
+                // setProperty expects: [obj, value] → we need obj below modified_collection
+                // Solution: store modified_collection as temp, load obj, load temp, setProperty
+                scopeTracker.pushScope()
+                let tempSlot = scopeTracker.declare(name: "__set_temp", isMutable: false)
+                Instruction.storeLocal(tempSlot, into: &chunk)
+                // Load the root object
+                if let local = scopeTracker.resolve(rootIdent.name) {
+                    Instruction.loadLocal(local.slot, into: &chunk)
+                } else {
+                    let nameIdx = chunk.constantPool.addString(rootIdent.name)
+                    Instruction.loadGlobal(nameIdx, into: &chunk)
+                }
+                // Stack: [obj]
+                Instruction.loadLocal(tempSlot, into: &chunk)
+                // Stack: [obj, modified_collection]
+                let propIdx = chunk.constantPool.addPropertyName(memberAccess.member)
+                Instruction.setProperty(propIdx, into: &chunk)
+                // setProperty modifies InstanceRef in-place (class-based)
+                let removed = scopeTracker.popScope()
+                for _ in removed { chunk.write(.pop) }
             }
             chunk.write(.constNil) // assignment result for pop
         } else {

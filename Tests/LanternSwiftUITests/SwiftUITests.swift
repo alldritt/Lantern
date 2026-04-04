@@ -40,6 +40,65 @@ struct ViewDescriptorTests {
     }
 }
 
+@Suite("SwiftUIContext")
+struct SwiftUIContextTests {
+    @Test func stateOpcodes() {
+        let store = LanternStateStore()
+        let ctx = SwiftUIContext(stateStore: store)
+        let vm = VM()
+        vm.swiftUIContext = ctx
+
+        // State store protocol conformance
+        store.set("count", .int(0))
+        #expect(store.get("count") == .int(0))
+        store.set("count", .int(42))
+        #expect(store.get("count") == .int(42))
+        #expect(store.contains("count"))
+        #expect(!store.contains("missing"))
+    }
+
+    @Test func viewFactoryCreatesText() {
+        let vm = VM()
+        let factory = ViewFactory(vm: vm)
+        let result = factory.createView(typeName: "Text", arguments: [.string("Hello")])
+        #expect(result != nil)
+        #expect(result?.1.typeName == "Text")
+    }
+
+    @Test func viewFactoryCreatesSpacer() {
+        let vm = VM()
+        let factory = ViewFactory(vm: vm)
+        let result = factory.createView(typeName: "Spacer", arguments: [])
+        #expect(result != nil)
+        #expect(result?.1.typeName == "Spacer")
+    }
+
+    @Test @MainActor func viewFactoryCreatesContainer() {
+        let vm = VM()
+        let factory = ViewFactory(vm: vm)
+        // Create two text views first
+        let (textView1, desc1) = factory.createView(typeName: "Text", arguments: [.string("A")])!
+        let (textView2, desc2) = factory.createView(typeName: "Text", arguments: [.string("B")])!
+        let result = factory.createContainer(
+            typeName: "VStack",
+            children: [textView1, textView2],
+            childDescriptors: [desc1, desc2],
+            arguments: []
+        )
+        #expect(result != nil)
+        #expect(result?.1.typeName == "VStack")
+        #expect(result?.1.children.count == 2)
+    }
+
+    @Test func modifierApplicator() {
+        let vm = VM()
+        let factory = ViewFactory(vm: vm)
+        let (textView, _) = factory.createView(typeName: "Text", arguments: [.string("Hello")])!
+        let (_, descriptor) = ModifierApplicator.apply("padding", arguments: [], to: textView)
+        #expect(descriptor.name == "padding")
+    }
+}
+
 @Suite("ViewDescriptorBuilder")
 struct ViewDescriptorBuilderTests {
     @Test func buildSimple() {

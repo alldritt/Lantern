@@ -247,6 +247,19 @@ public final class SubscriptNode: ExpressionNode {
     }
 }
 
+public final class SubscriptDefaultNode: ExpressionNode {
+    public let object: ExpressionNode
+    public let index: ExpressionNode
+    public let defaultValue: ExpressionNode
+
+    public init(object: ExpressionNode, index: ExpressionNode, defaultValue: ExpressionNode, location: SourceLocation) {
+        self.object = object
+        self.index = index
+        self.defaultValue = defaultValue
+        super.init(location: location)
+    }
+}
+
 // MARK: - Collection Literals
 
 public final class ArrayLiteralNode: ExpressionNode {
@@ -280,10 +293,12 @@ public final class DictionaryLiteralNode: ExpressionNode {
 public final class ClosureExpressionNode: ExpressionNode {
     public let parameters: [String]
     public let body: BlockNode
+    public let captureList: [String]
 
-    public init(parameters: [String], body: BlockNode, location: SourceLocation) {
+    public init(parameters: [String], body: BlockNode, captureList: [String] = [], location: SourceLocation) {
         self.parameters = parameters
         self.body = body
+        self.captureList = captureList
         super.init(location: location)
     }
 

@@ -39,6 +39,9 @@ public final class VM: @unchecked Sendable {
     /// When true, the VM pauses on exceptions before propagating. Set by debugger.
     public var breakOnExceptions: Bool = false
 
+    /// SwiftUI context for @State/@Binding opcodes. Set during view body evaluation.
+    public var swiftUIContext: SwiftUIContext?
+
     // MARK: - Init
 
     public init(maxCallDepth: Int = defaultMaxCallDepth, executionLimit: Int = defaultExecutionLimit) {
@@ -440,12 +443,52 @@ public final class VM: @unchecked Sendable {
         case .deferPop:
             ip += 1 // no-op; defers run on return
 
-        // SwiftUI state — stubs (implemented by bridge)
-        case .stateInit, .stateGet, .stateSet, .bindingCreate, .publishSet:
+        // SwiftUI state management
+        case .stateInit:
+            guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
+            let value = stack.pop()
+            if let ctx = swiftUIContext, !ctx.stateStore.contains(name) {
+                ctx.stateStore.set(name, value)
+            }
+            ip += 3
+        case .stateGet:
+            guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
+            if let ctx = swiftUIContext {
+                try stack.push(ctx.stateStore.get(name))
+            } else {
+                try stack.push(.nil_)
+            }
+            ip += 3
+        case .stateSet:
+            guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
+            let value = stack.pop()
+            swiftUIContext?.stateStore.set(name, value)
+            ip += 3
+        case .bindingCreate:
+            // Push a marker value that the bridge can recognize as a binding reference
+            guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
+            try stack.push(.string("__binding:\(name)"))
+            ip += 3
+        case .publishSet:
+            guard let ni = readU16(at: ip + 1), let name = program.constantPool.propertyName(at: ni) else { throw decodeError() }
+            let value = stack.pop()
+            let instance = stack.pop()
+            if case .instance(let ref) = instance {
+                ref.setProperty(name, value)
+            }
+            // Notification is handled by the bridge layer
             ip += 3
         case .viewCollect:
+            let view = stack.pop()
+            swiftUIContext?.viewCollector?.collectView(view)
             ip += 1
         case .viewGroup:
+            guard let count = readU8(at: ip + 1) else { throw decodeError() }
+            if let grouped = swiftUIContext?.viewCollector?.groupViews(Int(count)) {
+                try stack.push(grouped)
+            } else {
+                try stack.push(.nil_)
+            }
             ip += 2
 
         // Debug
@@ -559,6 +602,14 @@ public final class VM: @unchecked Sendable {
                 throw InterpreterError.stackOverflow(at: loc())
             }
             let bp = stack.count - argCount
+            // Type coercion: promote Int→Double for parameters with Double type annotation
+            let params = ref.function.parameters
+            for i in 0..<min(argCount, params.count) {
+                if params[i].typeAnnotation == "Double",
+                   case .int(let v) = stack[bp + i] {
+                    stack[bp + i] = .double(Double(v))
+                }
+            }
             let retIP = returnIP ?? (ip + 2)
             let frame = CallFrame(function: ref.function, ip: retIP, basePointer: bp, captures: ref.captures)
             callStack.append(frame)
@@ -730,13 +781,36 @@ public final class VM: @unchecked Sendable {
                     result = .array(mutableArr)
                 } else {
                     // Simple sort for comparable value types
-                    let sorted = arr.sorted { a, b in
-                        if let la = a.intValue, let lb = b.intValue { return la < lb }
-                        if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
-                        if case .string(let la) = a, case .string(let lb) = b { return la < lb }
-                        return false
+                    // Check if elements have a user-defined < operator
+                    var useCustomCompare = false
+                    var customLessThan: Value? = nil
+                    if let first = arr.first, case .instance(let ref) = first {
+                        let opName = "\(ref.typeName).<"
+                        if let op = environment.getGlobal(opName) {
+                            useCustomCompare = true
+                            customLessThan = op
+                        }
                     }
-                    result = .array(sorted)
+                    if useCustomCompare, let lessThan = customLessThan {
+                        var mutableArr = arr
+                        for i in 0..<mutableArr.count {
+                            for j in 0..<(mutableArr.count - 1 - i) {
+                                let cmpResult = try invokeValue(lessThan, args: [mutableArr[j+1], mutableArr[j]])
+                                if case .bool(true) = cmpResult {
+                                    mutableArr.swapAt(j, j+1)
+                                }
+                            }
+                        }
+                        result = .array(mutableArr)
+                    } else {
+                        let sorted = arr.sorted { a, b in
+                            if let la = a.intValue, let lb = b.intValue { return la < lb }
+                            if let la = a.doubleValue, let lb = b.doubleValue { return la < lb }
+                            if case .string(let la) = a, case .string(let lb) = b { return la < lb }
+                            return false
+                        }
+                        result = .array(sorted)
+                    }
                 }
             case "joined":
                 let sep = (args.first?.stringValue) ?? ""
@@ -876,6 +950,20 @@ public final class VM: @unchecked Sendable {
                 let n = args.first?.intValue ?? 0
                 result = .array(Array(arr.suffix(n)))
             default:
+                // Check conformance-based methods before giving up
+                if let typeInfo = program.typeTable.first(where: { $0.name == "Array" }) {
+                    for conformance in typeInfo.conformances {
+                        let protoQualified = "\(conformance).\(name)"
+                        if let method = environment.getGlobal(protoQualified) {
+                            try stack.push(method)
+                            try stack.push(receiver)
+                            for arg in args { try stack.push(arg) }
+                            let retIP = ip + 4
+                            try callFunction(argCount: args.count + 1, returnIP: retIP)
+                            return true
+                        }
+                    }
+                }
                 throw InterpreterError.undefinedMethod(name, on: "Array", at: loc())
             }
         case .string(let s):
@@ -921,6 +1009,45 @@ public final class VM: @unchecked Sendable {
             case "removeValue":
                 if case .string(let key) = args.first { d.removeValue(forKey: key) }
                 result = .dictionary(d)
+            case "compactMapValues":
+                // dict.compactMapValues { transform } — apply transform to each value, keep non-nil
+                guard let transform = args.first else { result = .dictionary(d); break }
+                var newDict: [String: Value] = [:]
+                for (key, value) in d {
+                    let mapped = try invokeValue(transform, args: [value])
+                    switch mapped {
+                    case .nil_, .optional(.none): continue
+                    case .optional(.some(let inner)): newDict[key] = inner
+                    default: newDict[key] = mapped
+                    }
+                }
+                result = .dictionary(newDict)
+            case "sorted":
+                // dict.sorted() returns array of [key, value] pairs
+                // dict.sorted { $0.value > $1.value } uses a comparator
+                let pairs: [Value] = d.map { key, value in
+                    .array([.string(key), value])
+                }
+                if let comparator = args.first {
+                    // Sort with custom comparator — expects (pair, pair) -> Bool
+                    var mutablePairs = pairs
+                    for i in 0..<mutablePairs.count {
+                        for j in 0..<(mutablePairs.count - 1 - i) {
+                            let cmpResult = try invokeValue(comparator, args: [mutablePairs[j], mutablePairs[j+1]])
+                            if case .bool(false) = cmpResult {
+                                mutablePairs.swapAt(j, j+1)
+                            }
+                        }
+                    }
+                    result = .array(mutablePairs)
+                } else {
+                    let sorted = pairs.sorted { a, b in
+                        guard case .array(let pa) = a, case .array(let pb) = b,
+                              case .string(let ka) = pa[0], case .string(let kb) = pb[0] else { return false }
+                        return ka < kb
+                    }
+                    result = .array(sorted)
+                }
             default:
                 throw InterpreterError.undefinedMethod(name, on: "Dictionary", at: loc())
             }
@@ -1066,6 +1193,9 @@ public final class VM: @unchecked Sendable {
             case "isEmpty": return .bool(arr.isEmpty)
             case "first": return .optional(arr.first)
             case "last": return .optional(arr.last)
+            // key/value for dictionary sorted() pairs (2-element arrays)
+            case "key" where arr.count == 2: return arr[0]
+            case "value" where arr.count == 2: return arr[1]
             default: throw InterpreterError.undefinedProperty(name, on: "Array", at: loc())
             }
         case .string(let s):
@@ -1106,12 +1236,23 @@ public final class VM: @unchecked Sendable {
                 throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
             }
         case .optional(.some(let inner)):
-            // Optional chaining: unwrap and access property
-            let result = try getProperty(inner, name: name)
-            return .optional(result)
+            // Support enum-style pattern matching on optionals
+            switch name {
+            case "caseName": return .string("some")
+            case "associatedValues": return .array([inner])
+            default:
+                // Optional chaining: unwrap and access property
+                let result = try getProperty(inner, name: name)
+                return .optional(result)
+            }
         case .optional(.none), .nil_:
-            // Optional chaining on nil: return nil
-            return .nil_
+            switch name {
+            case "caseName": return .string("none")
+            case "associatedValues": return .array([])
+            default:
+                // Optional chaining on nil: return nil
+                return .nil_
+            }
         default:
             // Check for computed property getter from extensions
             let getterName = "\(value.typeName).__get_\(name)"

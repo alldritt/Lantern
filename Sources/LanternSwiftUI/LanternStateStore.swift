@@ -4,7 +4,7 @@ import LanternVM
 
 /// Holds @State values for an interpreted view. Integrates with SwiftUI's
 /// observation system through ObservableObject.
-public final class LanternStateStore: ObservableObject {
+public final class LanternStateStore: ObservableObject, StateStoreProtocol {
     @Published public var values: [String: Value] = [:]
 
     public init() {}

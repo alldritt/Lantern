@@ -81,7 +81,7 @@ struct Phase6Tests {
         let d = Direction.north
         print(d)
         """
-        #expect(lanternOutput(src) == "Direction.north")
+        #expect(lanternOutput(src) == "north")
     }
 
     @Test func todoList() {

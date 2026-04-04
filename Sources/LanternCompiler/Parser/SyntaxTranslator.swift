@@ -107,6 +107,14 @@ final class SyntaxTranslator: SyntaxVisitor {
         let isMutable = decl.bindingSpecifier.tokenKind == .keyword(.var)
         let isStatic = decl.modifiers.contains { $0.name.tokenKind == .keyword(.static) }
 
+        // Extract property wrapper attributes (@State, @Binding, @Published, etc.)
+        let attributes = decl.attributes.compactMap { attr -> String? in
+            if case .attribute(let attrSyntax) = attr {
+                return attrSyntax.attributeName.trimmedDescription
+            }
+            return nil
+        }
+
         guard let binding = decl.bindings.first else { return nil }
         let name = binding.pattern.trimmedDescription
 
@@ -162,6 +170,7 @@ final class SyntaxTranslator: SyntaxVisitor {
 
         let initializer = binding.initializer.flatMap { translateExpr($0.value) }
 
+
         if isStatic {
             return PropertyNode(
                 name: name,
@@ -169,6 +178,7 @@ final class SyntaxTranslator: SyntaxVisitor {
                 isStatic: true,
                 typeAnnotation: typeAnnotation,
                 initializer: initializer,
+                attributes: attributes,
                 location: self.location(of: decl)
             )
         }
@@ -178,6 +188,7 @@ final class SyntaxTranslator: SyntaxVisitor {
             isMutable: isMutable,
             typeAnnotation: typeAnnotation,
             initializer: initializer,
+            attributes: attributes,
             location: self.location(of: decl)
         )
     }
@@ -535,8 +546,38 @@ final class SyntaxTranslator: SyntaxVisitor {
         )
     }
 
-    private func translateWhileStmt(_ stmt: WhileStmtSyntax) -> WhileStatementNode {
+    private func translateWhileStmt(_ stmt: WhileStmtSyntax) -> StatementNode {
         let loc = self.location(of: stmt)
+
+        // Check for `while let x = expr` (optional binding)
+        if let first = stmt.conditions.first,
+           case .optionalBinding(let binding) = first.condition {
+            let varName = binding.pattern.trimmedDescription
+            guard let initExpr = binding.initializer?.value,
+                  let valueExpr = translateExpr(initExpr) else {
+                return WhileStatementNode(condition: BoolLiteralNode(value: false, location: loc),
+                                          body: BlockNode(statements: [], location: loc), location: loc)
+            }
+            // Transform `while let x = expr { body }` into:
+            // while true { let __opt = expr; if __opt == nil { break }; let x = __opt!; body }
+            let bodyStatements = translateCodeBlockItemList(stmt.body.statements)
+            let body = BlockNode(statements: bodyStatements, location: loc)
+
+            // Build: if let x = expr { body } else { break }
+            let ifLetNode = IfStatementNode(
+                optionalBinding: OptionalBinding(name: varName, value: valueExpr),
+                thenBlock: body,
+                elseBlock: BlockNode(statements: [BreakStatementNode(location: loc)], location: loc),
+                location: loc
+            )
+            let wrapperBody = BlockNode(statements: [ifLetNode], location: loc)
+            return WhileStatementNode(
+                condition: BoolLiteralNode(value: true, location: loc),
+                body: wrapperBody,
+                location: loc
+            )
+        }
+
         let condition: ExpressionNode
         if let first = stmt.conditions.first, case .expression(let condExpr) = first.condition {
             condition = translateExpr(condExpr) ?? BoolLiteralNode(value: true, location: loc)
@@ -599,8 +640,23 @@ final class SyntaxTranslator: SyntaxVisitor {
                 case .case(let caseLabel):
                     let patterns: [CasePattern] = caseLabel.caseItems.map { item in
                         let patternText = item.pattern.trimmedDescription
+                        // Where clause: `case let x where condition`
+                        let whereExpr: ExpressionNode? = {
+                            if let whereClause = item.whereClause {
+                                return translateExpr(whereClause.condition)
+                            }
+                            return nil
+                        }()
                         if patternText == "_" {
+                            if let wExpr = whereExpr {
+                                return .binding("_", wExpr)
+                            }
                             return .wildcard
+                        }
+                        // Value binding pattern: `let x` or `let x where ...`
+                        if patternText.hasPrefix("let ") || patternText.hasPrefix("var ") {
+                            let bindingName = String(patternText.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                            return .binding(bindingName, whereExpr)
                         }
                         // Check for enum case pattern with bindings: .caseName(let x, let y)
                         if patternText.hasPrefix("."),
@@ -614,6 +670,59 @@ final class SyntaxTranslator: SyntaxVisitor {
                                  .replacingOccurrences(of: "var ", with: "")
                             }
                             return .enumCase(caseName: caseName, bindings: bindings)
+                        }
+                        // Check for enum case without bindings: .caseName
+                        if patternText.hasPrefix(".") && !patternText.contains("(") {
+                            let caseName = String(patternText.dropFirst())
+                            return .enumCase(caseName: caseName, bindings: [])
+                        }
+                        // Tuple pattern: (.idle, .running) — element-wise matching
+                        if patternText.hasPrefix("(") && patternText.hasSuffix(")") {
+                            let inner = String(patternText.dropFirst().dropLast())
+                            // Split by comma, respecting parentheses nesting
+                            let elements = splitTupleElements(inner)
+                            if elements.count >= 2 {
+                                let subPatterns: [CasePattern] = elements.map { elemText in
+                                    let trimmed = elemText.trimmingCharacters(in: .whitespaces)
+                                    if trimmed == "_" { return .wildcard }
+                                    if trimmed.hasPrefix(".") {
+                                        if let expr = translateExprFromText(trimmed, at: item) {
+                                            return .expression(expr)
+                                        }
+                                    }
+                                    if let expr = translateExprFromText(trimmed, at: item) {
+                                        return .expression(expr)
+                                    }
+                                    return .identifier(trimmed)
+                                }
+                                return .tuple(subPatterns)
+                            }
+                        }
+                        // Range pattern: `0..<13` or `80..<90` or `90...`
+                        if patternText.contains("..<") {
+                            let parts = patternText.components(separatedBy: "..<")
+                            if parts.count == 2,
+                               let startExpr = translateExprFromText(parts[0].trimmingCharacters(in: .whitespaces), at: item),
+                               let endExpr = translateExprFromText(parts[1].trimmingCharacters(in: .whitespaces), at: item) {
+                                return .range(startExpr, endExpr, false)
+                            }
+                        }
+                        if patternText.contains("...") {
+                            let parts = patternText.components(separatedBy: "...")
+                            if parts.count == 2 {
+                                let startStr = parts[0].trimmingCharacters(in: .whitespaces)
+                                let endStr = parts[1].trimmingCharacters(in: .whitespaces)
+                                if !startStr.isEmpty, !endStr.isEmpty,
+                                   let startExpr = translateExprFromText(startStr, at: item),
+                                   let endExpr = translateExprFromText(endStr, at: item) {
+                                    return .range(startExpr, endExpr, true)
+                                }
+                                // One-sided range like `90...` (no upper bound)
+                                if !startStr.isEmpty && endStr.isEmpty,
+                                   let startExpr = translateExprFromText(startStr, at: item) {
+                                    return .range(startExpr, IntLiteralNode(value: Int.max, location: self.location(of: item)), true)
+                                }
+                            }
                         }
                         // Try to parse as expression
                         if let expr = translateExprFromText(patternText, at: item) {
@@ -631,6 +740,25 @@ final class SyntaxTranslator: SyntaxVisitor {
         }
 
         return SwitchStatementNode(subject: subject, cases: cases, location: loc)
+    }
+
+    /// Split tuple elements by commas, respecting parenthesized nesting.
+    private func splitTupleElements(_ text: String) -> [String] {
+        var results: [String] = []
+        var current = ""
+        var depth = 0
+        for ch in text {
+            if ch == "(" { depth += 1; current.append(ch) }
+            else if ch == ")" { depth -= 1; current.append(ch) }
+            else if ch == "," && depth == 0 {
+                results.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        results.append(current)
+        return results
     }
 
     private func translateExprFromText(_ text: String, at node: some SyntaxProtocol) -> ExpressionNode? {
@@ -723,8 +851,9 @@ final class SyntaxTranslator: SyntaxVisitor {
             if tupleExpr.elements.count == 1, let first = tupleExpr.elements.first {
                 return translateExpr(first.expression)
             }
-            emitDiagnostic("Tuple expressions are not supported", at: tupleExpr)
-            return nil
+            // Multi-element tuple: treat as array literal for runtime matching
+            let elements = tupleExpr.elements.compactMap { translateExpr($0.expression) }
+            return ArrayLiteralNode(elements: elements, location: self.location(of: tupleExpr))
         } else if let ifExpr = expr.as(IfExprSyntax.self) {
             // If-expression used as expression; translate as the statement form
             // and wrap, but for simplicity return nil and let the statement handle it
@@ -735,6 +864,9 @@ final class SyntaxTranslator: SyntaxVisitor {
             return nil
         } else if let typeExpr = expr.as(TypeExprSyntax.self) {
             return TypeReferenceNode(typeName: typeExpr.type.trimmedDescription, location: self.location(of: typeExpr))
+        } else if let genericExpr = expr.as(GenericSpecializationExprSyntax.self) {
+            // Strip generic parameters: Stack<Int> → Stack
+            return translateExpr(genericExpr.expression)
         } else {
             emitDiagnostic("Unsupported expression: \(type(of: expr))", at: expr)
             return nil
@@ -839,8 +971,14 @@ final class SyntaxTranslator: SyntaxVisitor {
     private func translateSubscriptExpr(_ expr: SubscriptCallExprSyntax) -> ExpressionNode? {
         let loc = self.location(of: expr)
         guard let obj = translateExpr(expr.calledExpression) else { return nil }
-        guard let firstArg = expr.arguments.first,
+        let args = Array(expr.arguments)
+        guard let firstArg = args.first,
               let index = translateExpr(firstArg.expression) else { return nil }
+        // Check for default: label — dict[key, default: value]
+        if args.count == 2, args[1].label?.trimmedDescription == "default",
+           let defaultExpr = translateExpr(args[1].expression) {
+            return SubscriptDefaultNode(object: obj, index: index, defaultValue: defaultExpr, location: loc)
+        }
         return SubscriptNode(object: obj, index: index, location: loc)
     }
 
@@ -930,8 +1068,17 @@ final class SyntaxTranslator: SyntaxVisitor {
     private func translateClosureExpr(_ expr: ClosureExprSyntax) -> ClosureExpressionNode {
         let loc = self.location(of: expr)
         var params: [String] = []
+        var captureList: [String] = []
 
         if let signature = expr.signature {
+            // Parse capture list: { [x] in ... } or { [weak self] in ... }
+            if let capture = signature.capture {
+                for item in capture.items {
+                    let name = item.expression.trimmedDescription
+                    captureList.append(name)
+                }
+            }
+
             if let paramList = signature.parameterClause {
                 switch paramList {
                 case .simpleInput(let simpleParams):
@@ -959,7 +1106,7 @@ final class SyntaxTranslator: SyntaxVisitor {
             }
         }
 
-        return ClosureExpressionNode(parameters: params, body: body, location: loc)
+        return ClosureExpressionNode(parameters: params, body: body, captureList: captureList, location: loc)
     }
 
     private func translateTryExpr(_ expr: TryExprSyntax) -> TryExpressionNode? {

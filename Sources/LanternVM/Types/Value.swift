@@ -127,9 +127,9 @@ public indirect enum Value: Sendable, CustomStringConvertible {
         case .instance(let i): return "\(i.typeName)(...)"
         case .enumCase(let e):
             if let av = e.associatedValues, !av.isEmpty {
-                return "\(e.typeName).\(e.caseName)(\(av.map(\.description).joined(separator: ", ")))"
+                return "\(e.caseName)(\(av.map(\.description).joined(separator: ", ")))"
             }
-            return "\(e.typeName).\(e.caseName)"
+            return e.caseName
         case .void: return "()"
         }
     }

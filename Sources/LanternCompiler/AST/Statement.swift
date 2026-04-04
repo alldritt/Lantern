@@ -37,12 +37,14 @@ public final class VariableDeclarationNode: StatementNode {
     public let isMutable: Bool
     public let typeAnnotation: String?
     public var initializer: ExpressionNode?
+    public let attributes: [String]
 
-    public init(name: String, isMutable: Bool, typeAnnotation: String? = nil, initializer: ExpressionNode? = nil, location: SourceLocation) {
+    public init(name: String, isMutable: Bool, typeAnnotation: String? = nil, initializer: ExpressionNode? = nil, attributes: [String] = [], location: SourceLocation) {
         self.name = name
         self.isMutable = isMutable
         self.typeAnnotation = typeAnnotation
         self.initializer = initializer
+        self.attributes = attributes
         super.init(location: location)
     }
 
@@ -236,6 +238,9 @@ public enum CasePattern {
     case identifier(String)
     case wildcard
     case enumCase(caseName: String, bindings: [String])
+    case range(ExpressionNode, ExpressionNode, Bool) // start, end, isClosed
+    case binding(String, ExpressionNode?) // `case let x where condition`
+    case tuple([CasePattern]) // (.idle, .running) — element-wise matching
 }
 
 public struct SwitchCase {
