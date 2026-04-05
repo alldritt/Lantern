@@ -62,6 +62,20 @@ struct ViewTestHarness {
         return try vm.invokeValue(closure, args: [])
     }
 
+    /// Invoke a named method on a View type with the context active.
+    /// The method should be a compiled function stored as "TypeName.methodName" global.
+    @discardableResult
+    func invokeMethod(typeName: String, methodName: String, instance: InstanceRef? = nil) throws -> Value {
+        let qualifiedName = "\(typeName).\(methodName)"
+        guard let method = vm.environment.getGlobal(qualifiedName) else {
+            throw TestError("No method \(qualifiedName) found")
+        }
+        let inst = instance ?? InstanceRef(typeName: typeName, kind: .struct)
+        vm.swiftUIContext = ctx
+        defer { vm.swiftUIContext = nil }
+        return try vm.invokeValue(method, args: [.instance(inst)])
+    }
+
     struct TestError: Error, CustomStringConvertible {
         let description: String
         init(_ msg: String) { description = msg }
@@ -699,6 +713,271 @@ struct SwiftUIIntegrationTests {
             Issue.record("ForEach example failed: \(result)"); return
         }
         #expect(value.hostObjectRef?.object is ViewBox)
+    }
+}
+
+// MARK: - Closure State Mutation Tests
+//
+// These tests verify that compiled closures (the same bytecode used by
+// Button actions, onAppear, onTapGesture, etc.) correctly read and write
+// @State via stateGet/stateSet opcodes, and that changes persist across
+// subsequent body evaluations.
+
+@Suite("Closure State Mutations")
+struct ClosureStateMutationTests {
+
+    @Test func methodSetsStateThroughBytecode() throws {
+        // Compile a View with a method that sets @State — this produces stateSet opcode
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var count = 0
+                var body: some View { Text("\\(count)") }
+                func increment() { count = count + 1 }
+                func reset() { count = 0 }
+                func setTo(_ n: Int) { count = n }
+            }
+            """,
+            stateDefaults: ["count": .int(0)]
+        )
+
+        // Invoke the body — should read count=0
+        _ = try h.invokeBody(typeName: "V", properties: [("count", .int(0))])
+        #expect(h.store.get("count") == .int(0))
+
+        // Invoke increment() — should stateSet count to 1
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("count", .int(0))])
+        _ = try h.invokeMethod(typeName: "V", methodName: "increment", instance: inst)
+        #expect(h.store.get("count") == .int(1), "increment() should set count to 1 via stateSet")
+
+        // Invoke increment again — should read 1, set to 2
+        _ = try h.invokeMethod(typeName: "V", methodName: "increment", instance: inst)
+        #expect(h.store.get("count") == .int(2), "Second increment() should set count to 2")
+
+        // Re-invoke body — should still read count=2 from store
+        _ = try h.invokeBody(typeName: "V", properties: [("count", .int(0))])
+        #expect(h.store.get("count") == .int(2), "Body re-eval should not reset state")
+
+        // Reset
+        _ = try h.invokeMethod(typeName: "V", methodName: "reset", instance: inst)
+        #expect(h.store.get("count") == .int(0), "reset() should set count to 0")
+    }
+
+    @Test func stateSetWithArgument() throws {
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var value = 0
+                var body: some View { Text("\\(value)") }
+                func setTo(_ n: Int) { value = n }
+            }
+            """,
+            stateDefaults: ["value": .int(0)]
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("value", .int(0))])
+        _ = try h.invokeMethod(typeName: "V", methodName: "setTo", instance: inst)
+        // setTo takes an argument — need to invoke with args
+        // Actually invokeMethod passes just the instance. Let me invoke directly:
+        let method = h.vm.environment.getGlobal("V.setTo")!
+        h.vm.swiftUIContext = h.ctx
+        defer { h.vm.swiftUIContext = nil }
+        _ = try h.vm.invokeValue(method, args: [.instance(inst), .int(100)])
+        #expect(h.store.get("value") == .int(100), "setTo(100) should set value to 100 via stateSet")
+    }
+
+    @Test func multipleStatePropertiesMutated() throws {
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var x = 0
+                @State var y = ""
+                @State var z = false
+                var body: some View { Text("\\(x) \\(y)") }
+                func update() {
+                    x = 42
+                    y = "hello"
+                    z = true
+                }
+            }
+            """,
+            stateDefaults: ["x": .int(0), "y": .string(""), "z": .bool(false)]
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [
+            ("x", .int(0)), ("y", .string("")), ("z", .bool(false))
+        ])
+        _ = try h.invokeMethod(typeName: "V", methodName: "update", instance: inst)
+        #expect(h.store.get("x") == .int(42))
+        #expect(h.store.get("y") == .string("hello"))
+        #expect(h.store.get("z") == .bool(true))
+    }
+
+    @Test func stateGetReadsCurrentValueInClosure() throws {
+        // Verify stateGet reads the current store value, not the instance property
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var n = 0
+                var body: some View { Text("\\(n)") }
+                func doubleIt() { n = n * 2 }
+            }
+            """,
+            stateDefaults: ["n": .int(5)]  // Seed with 5, instance has 0
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("n", .int(0))])
+        _ = try h.invokeMethod(typeName: "V", methodName: "doubleIt", instance: inst)
+        // Should read n=5 from store (not 0 from instance), double to 10
+        #expect(h.store.get("n") == .int(10), "doubleIt() should read 5 from store and set 10")
+    }
+
+    @Test func stateChangeVisibleInSubsequentBodyEval() throws {
+        // The critical test: change state, re-invoke body, verify new state is read
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var count = 0
+                var body: some View {
+                    VStack {
+                        Text("Count: \\(count)")
+                    }
+                }
+                func bumpTo100() { count = 100 }
+            }
+            """,
+            stateDefaults: ["count": .int(0)]
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("count", .int(0))])
+
+        // First body eval — count is 0
+        _ = try h.invokeBody(typeName: "V", properties: [("count", .int(0))])
+        #expect(h.store.get("count") == .int(0))
+
+        // Simulate onAppear: invoke the method that sets count = 100
+        _ = try h.invokeMethod(typeName: "V", methodName: "bumpTo100", instance: inst)
+        #expect(h.store.get("count") == .int(100))
+
+        // Re-invoke body (simulating SwiftUI re-render after state change)
+        _ = try h.invokeBody(typeName: "V", properties: [("count", .int(0))])
+        // The store should STILL have 100 — the body should read 100 via stateGet
+        #expect(h.store.get("count") == .int(100), "State must persist after body re-evaluation")
+    }
+
+    @Test func contextRestorePatternWorks() throws {
+        // Simulate exactly what onAppear/Button actions do:
+        // 1. Body evaluates with context set
+        // 2. Context is cleared (defer)
+        // 3. Later, context is restored from capture
+        // 4. Closure invoked — stateSet should write to the SAME store
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var x = 0
+                var body: some View { Text("\\(x)") }
+                func setX() { x = 99 }
+            }
+            """,
+            stateDefaults: ["x": .int(0)]
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("x", .int(0))])
+
+        // Step 1: Body eval (context active)
+        h.vm.swiftUIContext = h.ctx
+        let getter = h.vm.environment.getGlobal("V.__get_body")!
+        _ = try h.vm.invokeValue(getter, args: [.instance(inst)])
+
+        // Step 2: Capture context, then clear it (simulating defer)
+        let capturedCtx = h.vm.swiftUIContext
+        h.vm.swiftUIContext = nil
+
+        // Step 3: Later — restore captured context (simulating onAppear/Button action)
+        let prevCtx = h.vm.swiftUIContext
+        h.vm.swiftUIContext = capturedCtx
+        defer { h.vm.swiftUIContext = prevCtx }
+
+        // Step 4: Invoke the method
+        let method = h.vm.environment.getGlobal("V.setX")!
+        _ = try h.vm.invokeValue(method, args: [.instance(inst)])
+
+        #expect(h.store.get("x") == .int(99), "stateSet via restored context should write to the same store")
+    }
+
+    @Test func observableObjectPublishesOnStateSet() throws {
+        // Verify that LanternStateStore.set() triggers objectWillChange
+        let store = LanternStateStore()
+        store.set("count", .int(0))
+
+        var changeCount = 0
+        let cancellable = store.objectWillChange.sink { _ in
+            changeCount += 1
+        }
+
+        store.set("count", .int(1))
+        #expect(changeCount == 1, "objectWillChange should fire on set()")
+
+        store.set("count", .int(2))
+        #expect(changeCount == 2, "objectWillChange should fire on each set()")
+
+        store.set("other", .string("hello"))
+        #expect(changeCount == 3, "objectWillChange should fire for any key")
+
+        _ = cancellable // keep alive
+    }
+
+    @Test func stateSetWithNilContextIsNoOp() throws {
+        // When swiftUIContext is nil, stateSet should silently do nothing (not crash)
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var x = 0
+                var body: some View { Text("\\(x)") }
+                func setX() { x = 42 }
+            }
+            """,
+            stateDefaults: ["x": .int(0)]
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("x", .int(0))])
+
+        // Invoke WITHOUT setting context
+        h.vm.swiftUIContext = nil
+        let method = h.vm.environment.getGlobal("V.setX")!
+        _ = try h.vm.invokeValue(method, args: [.instance(inst)])
+
+        // Store should be unchanged (stateSet was a no-op)
+        #expect(h.store.get("x") == .int(0), "stateSet with nil context should be a no-op")
+    }
+
+    @Test func invokeValueDoesNotThrowForSimpleClosure() throws {
+        // Verify that invokeValue doesn't throw for a simple method invocation
+        // (ruling out executionLimit or other issues)
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var x = 0
+                var body: some View { Text("\\(x)") }
+                func set50() { x = 50 }
+            }
+            """,
+            stateDefaults: ["x": .int(0)]
+        )
+
+        let inst = InstanceRef(typeName: "V", kind: .struct, properties: [("x", .int(0))])
+        let method = h.vm.environment.getGlobal("V.set50")!
+
+        // This should NOT throw
+        h.vm.swiftUIContext = h.ctx
+        do {
+            _ = try h.vm.invokeValue(method, args: [.instance(inst)])
+        } catch {
+            Issue.record("invokeValue threw: \(error)")
+        }
+        h.vm.swiftUIContext = nil
+
+        #expect(h.store.get("x") == .int(50))
     }
 }
 #endif

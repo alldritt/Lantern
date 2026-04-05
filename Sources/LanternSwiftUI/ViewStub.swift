@@ -9,7 +9,11 @@ public struct ViewStub: View {
     let instance: InstanceRef
     let appStorageKeys: [String: String]
 
-    @ObservedObject var stateStore: LanternStateStore
+    /// External store owned by the Interpreter — survives view recreation.
+    let externalStore: LanternStateStore
+    /// Internal @StateObject that mirrors the external store for SwiftUI observation.
+    @StateObject private var observer = StateObserver()
+
     @SwiftUI.Environment(\.colorScheme) private var colorScheme
     @SwiftUI.Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -21,18 +25,20 @@ public struct ViewStub: View {
     public init(vm: VM, instance: InstanceRef, stateStore: LanternStateStore = LanternStateStore(), appStorageKeys: [String: String] = [:]) {
         self.vm = vm
         self.instance = instance
-        self.stateStore = stateStore
+        self.externalStore = stateStore
         self.appStorageKeys = appStorageKeys
     }
 
     public var body: some View {
+        // Read observer.revision to establish SwiftUI dependency
+        let _ = observer.revision
         evaluateBody()
     }
 
     private func evaluateBody() -> AnyView {
         let previousContext = vm.swiftUIContext
         descriptorBuilder.reset()
-        let ctx = SwiftUIContext(stateStore: stateStore, descriptorBuilder: descriptorBuilder)
+        let ctx = SwiftUIContext(stateStore: externalStore, descriptorBuilder: descriptorBuilder)
 
         // Wire @AppStorage key mappings
         ctx.appStorageKeys = appStorageKeys
@@ -45,10 +51,13 @@ public struct ViewStub: View {
 
         // Seed @State default values from instance properties (first render only)
         for name in instance.propertyNames {
-            if !stateStore.contains(name), let value = instance.property(name) {
-                stateStore.set(name, value)
+            if !externalStore.contains(name), let value = instance.property(name) {
+                externalStore.set(name, value)
             }
         }
+
+        // Connect the external store to SwiftUI observation (once)
+        observer.observe(externalStore)
 
         vm.swiftUIContext = ctx
         defer { vm.swiftUIContext = previousContext }
@@ -64,6 +73,28 @@ public struct ViewStub: View {
         } catch {
             return AnyView(Text("Error: \(error)"))
         }
+    }
+}
+
+/// Bridges external LanternStateStore changes to SwiftUI's observation system.
+/// Uses @StateObject lifecycle to survive view recreation, and Combine to
+/// forward objectWillChange from the external store.
+import Combine
+
+@MainActor
+final class StateObserver: ObservableObject {
+    @Published var revision: Int = 0
+    private var cancellable: AnyCancellable?
+    private weak var observedStore: LanternStateStore?
+
+    func observe(_ store: LanternStateStore) {
+        guard observedStore !== store else { return }
+        observedStore = store
+        cancellable = store.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.revision += 1
+            }
     }
 }
 #endif
