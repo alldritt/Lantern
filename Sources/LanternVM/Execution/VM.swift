@@ -14,7 +14,7 @@ public final class VM: @unchecked Sendable {
 
     private var program: CompiledProgram!
     private var ip: Int = 0
-    private var executionCount: Int = 0
+    private(set) var executionCount: Int = 0
     private let maxCallDepth: Int
     public var executionLimit: Int
 
@@ -1014,27 +1014,24 @@ public final class VM: @unchecked Sendable {
     /// that loaded the receiver (skipping past argument-loading instructions).
     private func findReceiverLoadIP(at callMethodIP: Int, argCount: Int) -> Int? {
         var pos = callMethodIP
-        // Skip backward past argCount worth of instructions
         var toSkip = argCount
-        while pos > 0 && toSkip >= 0 {
-            // Scan backward to find instruction start
-            // Try each possible instruction size
+        var maxAttempts = argCount + 20 // Safety bound to prevent infinite loops
+        while pos > 0 && toSkip >= 0 && maxAttempts > 0 {
+            maxAttempts -= 1
+            var found = false
             for size in [9, 4, 3, 2, 1] {
                 let candidateIP = pos - size
                 if candidateIP >= 0, let op = Opcode(rawValue: program.bytecode[candidateIP]), op.instructionSize == size {
                     pos = candidateIP
                     if toSkip == 0 {
-                        // This is the receiver instruction
-                        if op == .loadLocal || op == .loadGlobal {
-                            return pos
-                        }
-                        return nil
+                        return (op == .loadLocal || op == .loadGlobal) ? pos : nil
                     }
                     toSkip -= 1
+                    found = true
                     break
                 }
             }
-            if toSkip >= 0 && pos == callMethodIP { break } // couldn't find instruction
+            if !found { break }
         }
         return nil
     }
