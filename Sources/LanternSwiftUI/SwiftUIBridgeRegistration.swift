@@ -68,7 +68,26 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         }
     }
 
-    // MARK: - Container View Constructors (need VM for trailing closures)
+    // MARK: - Additional Leaf Views
+
+    registry.registerType("Link") { args in
+        guard args.count >= 2, let title = args[0].stringValue, let urlStr = args[1].stringValue,
+              let url = Foundation.URL(string: urlStr) else { return .nil_ }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Link(title, destination: url))), typeName: "Link"))
+    }
+
+    registry.registerType("Gauge") { args in
+        let value = args.first?.doubleValue ?? 0.5
+        let view = AnyView(Gauge(value: value) { EmptyView() })
+        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Gauge"))
+    }
+
+    registry.registerType("LabeledContent") { args in
+        let label = args.first?.stringValue ?? ""
+        let content = args.count > 1 ? args[1].stringValue ?? "" : ""
+        let view = AnyView(LabeledContent(label, value: content))
+        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "LabeledContent"))
+    }
 
     // MARK: - Binding-Aware Views
 
@@ -82,18 +101,31 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         registerForEach(on: registry, vm: vm)
         registerNavigationViews(on: registry, vm: vm)
         registerSheetModifier(on: registry, vm: vm)
+        registerPresentationModifiers(on: registry, vm: vm)
         registerWithAnimation(on: registry, vm: vm)
+        registerAdditionalViews(on: registry, vm: vm)
     }
 
     // MARK: - Modifier Methods
 
     let modifierNames = [
-        "padding", "frame", "font", "bold", "italic", "underline",
+        // Layout
+        "padding", "frame", "fixedSize", "offset", "ignoresSafeArea", "zIndex",
+        // Typography
+        "font", "bold", "italic", "underline", "strikethrough", "lineLimit",
+        "multilineTextAlignment",
+        // Appearance
         "foregroundColor", "foregroundStyle", "background", "overlay",
-        "opacity", "cornerRadius", "shadow", "border", "hidden",
-        "disabled", "navigationTitle", "rotationEffect", "scaleEffect",
-        "lineLimit", "fixedSize", "offset", "clipShape", "strikethrough",
-        "multilineTextAlignment", "listStyle", "animation"
+        "opacity", "cornerRadius", "shadow", "border", "hidden", "blur",
+        "clipShape", "mask", "tint", "accentColor",
+        // Transforms
+        "rotationEffect", "scaleEffect",
+        // Interaction
+        "disabled", "allowsHitTesting", "contentShape",
+        // Navigation
+        "navigationTitle",
+        // Styling
+        "listStyle", "animation",
     ]
 
     for modName in modifierNames {
@@ -216,6 +248,49 @@ private func registerBindingViews(on registry: BridgeRegistry) {
         }
         return .hostObject(HostObjectRef(object: ViewBox(AnyView(Slider(value: .constant(0.5)))), typeName: "Slider"))
     }
+
+    // Picker(title, selection: $binding) { options }
+    registry.registerType("Picker") { args in
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
+        if let bindingRef = args.compactMap({ extractBindingRef($0) }).first {
+            let binding = Binding<String>(
+                get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
+                set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
+            )
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+                Picker(title, selection: binding) { Text("Option").tag("option") }
+            )), typeName: "Picker"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+            Picker(title, selection: .constant("")) { EmptyView() }
+        )), typeName: "Picker"))
+    }
+
+    // DatePicker(title, selection: $binding)
+    registry.registerType("DatePicker") { args in
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
+        // DatePicker requires a Date binding — simplified for prototyping
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+            DatePicker(title, selection: .constant(Foundation.Date()))
+        )), typeName: "DatePicker"))
+    }
+
+    // Stepper(title, value: $binding, in: range)
+    registry.registerType("Stepper") { args in
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
+        if let bindingRef = args.compactMap({ extractBindingRef($0) }).first {
+            let binding = Binding<Int>(
+                get: { bindingRef.stateStore.get(bindingRef.key).intValue ?? 0 },
+                set: { bindingRef.stateStore.set(bindingRef.key, .int($0)) }
+            )
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+                Stepper(title, value: binding)
+            )), typeName: "Stepper"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+            Stepper(title, value: .constant(0))
+        )), typeName: "Stepper"))
+    }
 }
 
 private func isBindingRef(_ value: Value) -> Bool {
@@ -233,7 +308,8 @@ private func extractBindingRef(_ value: Value) -> BindingRef? {
 // MARK: - Container Types
 
 private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
-    let containerTypes = ["VStack", "HStack", "ZStack", "ScrollView", "Group", "List", "NavigationStack"]
+    let containerTypes = ["VStack", "HStack", "ZStack", "ScrollView", "Group", "List",
+                          "NavigationStack", "Form", "Section", "LazyVStack", "LazyHStack"]
 
     for typeName in containerTypes {
         registry.registerType(typeName) { [weak vm] args in
@@ -290,6 +366,19 @@ private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
                 containerView = AnyView(List { childBox.view })
             case "NavigationStack":
                 containerView = AnyView(NavigationStack { childBox.view })
+            case "Form":
+                containerView = AnyView(Form { childBox.view })
+            case "Section":
+                let header = spacing?.stringValue ?? "" // reuse spacing arg slot for header text
+                if !header.isEmpty {
+                    containerView = AnyView(Section(header: Text(header)) { childBox.view })
+                } else {
+                    containerView = AnyView(Section { childBox.view })
+                }
+            case "LazyVStack":
+                containerView = AnyView(LazyVStack(spacing: spacingValue ?? 8) { childBox.view })
+            case "LazyHStack":
+                containerView = AnyView(LazyHStack(spacing: spacingValue ?? 8) { childBox.view })
             default:
                 containerView = AnyView(childBox.view)
             }
@@ -524,6 +613,224 @@ private func registerWithAnimation(on registry: BridgeRegistry, vm: VM) {
         return .void
     }
     vm.environment.setGlobal("withAnimation", value: .nativeFunction(withAnimFn))
+}
+
+// MARK: - Presentation Modifiers
+
+private func registerPresentationModifiers(on registry: BridgeRegistry, vm: VM) {
+    #if os(iOS)
+    // .fullScreenCover(isPresented: $binding) { content }
+    registry.registerMethod(typeName: "View", selector: "fullScreenCover", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
+        let bindingRef = args.compactMap { extractBindingRef($0) }.first
+        let contentClosure = args.first(where: { if case .closure = $0 { return true }; return false })
+        if let bindingRef, let contentClosure {
+            let binding = Binding<Bool>(
+                get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
+                set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
+            )
+            let modified = AnyView(box.view.fullScreenCover(isPresented: binding) {
+                if let result = try? vm.invokeValue(contentClosure, args: []),
+                   case .hostObject(let r) = result, let b = r.object as? ViewBox { b.view }
+                else { EmptyView() }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        }
+        return receiver
+    }
+    #endif
+
+    // .confirmationDialog(title, isPresented: $binding) { actions }
+    registry.registerMethod(typeName: "View", selector: "confirmationDialog", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
+        let bindingRef = args.compactMap { extractBindingRef($0) }.first
+        let actionClosure = args.first(where: { if case .closure = $0 { return true }; return false })
+        if let bindingRef {
+            let binding = Binding<Bool>(
+                get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
+                set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
+            )
+            let modified = AnyView(box.view.confirmationDialog(title, isPresented: binding) {
+                if let actionClosure, let result = try? vm.invokeValue(actionClosure, args: []),
+                   case .hostObject(let r) = result, let b = r.object as? ViewBox { b.view }
+                else { Button("OK") { bindingRef.stateStore.set(bindingRef.key, .bool(false)) } }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        }
+        return receiver
+    }
+
+    // .toolbar { content }
+    registry.registerMethod(typeName: "View", selector: "toolbar", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first(where: { if case .closure = $0 { return true }; return false }) else { return receiver }
+        let modified = AnyView(box.view.toolbar {
+            if let result = try? vm.invokeValue(closure, args: []),
+               case .hostObject(let r) = result, let b = r.object as? ViewBox {
+                ToolbarItem { b.view }
+            }
+        })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .searchable(text: $binding)
+    registry.registerMethod(typeName: "View", selector: "searchable", parameterLabels: []) { receiver, args in
+        guard let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
+        if let bindingRef = args.compactMap({ extractBindingRef($0) }).first {
+            let binding = Binding<String>(
+                get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
+                set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
+            )
+            let modified = AnyView(box.view.searchable(text: binding))
+            return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        }
+        return receiver
+    }
+
+    // .refreshable { action }
+    registry.registerMethod(typeName: "View", selector: "refreshable", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.refreshable { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .swipeActions { buttons }
+    registry.registerMethod(typeName: "View", selector: "swipeActions", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.swipeActions {
+            if let result = try? vm.invokeValue(closure, args: []),
+               case .hostObject(let r) = result, let b = r.object as? ViewBox { b.view }
+        })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .contextMenu { content }
+    registry.registerMethod(typeName: "View", selector: "contextMenu", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.contextMenu {
+            if let result = try? vm.invokeValue(closure, args: []),
+               case .hostObject(let r) = result, let b = r.object as? ViewBox { b.view }
+        })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .onSubmit { action }
+    registry.registerMethod(typeName: "View", selector: "onSubmit", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.onSubmit { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .onLongPressGesture { action }
+    registry.registerMethod(typeName: "View", selector: "onLongPressGesture", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.onLongPressGesture { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    #if os(iOS)
+    // .popover(isPresented: $binding) { content }
+    registry.registerMethod(typeName: "View", selector: "popover", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
+        let bindingRef = args.compactMap { extractBindingRef($0) }.first
+        let contentClosure = args.first(where: { if case .closure = $0 { return true }; return false })
+        if let bindingRef, let contentClosure {
+            let binding = Binding<Bool>(
+                get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
+                set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
+            )
+            let modified = AnyView(box.view.popover(isPresented: binding) {
+                if let result = try? vm.invokeValue(contentClosure, args: []),
+                   case .hostObject(let r) = result, let b = r.object as? ViewBox { b.view }
+                else { EmptyView() }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        }
+        return receiver
+    }
+    #endif
+}
+
+// MARK: - Additional Views (Grid, Menu, GeometryReader)
+
+private func registerAdditionalViews(on registry: BridgeRegistry, vm: VM) {
+    // Menu("Title") { actions }
+    registry.registerType("Menu") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? "Menu"
+        let closure = args.first(where: { if case .closure = $0 { return true }; return false })
+        if let closure {
+            let view = AnyView(Menu(title) {
+                if let result = try? vm.invokeValue(closure, args: []),
+                   case .hostObject(let r) = result, let b = r.object as? ViewBox { b.view }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Menu"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Menu(title) { })), typeName: "Menu"))
+    }
+
+    // Grid { GridRow { ... } }
+    registry.registerType("Grid") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        let collector = ViewCollector()
+        if let closure = args.first(where: { if case .closure = $0 { return true }; return false }) {
+            let savedContext = vm.swiftUIContext
+            let stateStore = savedContext?.stateStore ?? DummyStateStore()
+            vm.swiftUIContext = SwiftUIContext(stateStore: stateStore, viewCollector: collector)
+            let result = try vm.invokeValue(closure, args: [])
+            vm.swiftUIContext = savedContext
+            if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                collector.views.append(box.view)
+            }
+        }
+        let content = collector.buildCombinedView()
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Grid { content })), typeName: "Grid"))
+    }
+
+    // GridRow { cells }
+    registry.registerType("GridRow") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        let collector = ViewCollector()
+        if let closure = args.first(where: { if case .closure = $0 { return true }; return false }) {
+            let savedContext = vm.swiftUIContext
+            let stateStore = savedContext?.stateStore ?? DummyStateStore()
+            vm.swiftUIContext = SwiftUIContext(stateStore: stateStore, viewCollector: collector)
+            let result = try vm.invokeValue(closure, args: [])
+            vm.swiftUIContext = savedContext
+            if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                collector.views.append(box.view)
+            }
+        }
+        let content = collector.buildCombinedView()
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(GridRow { content })), typeName: "GridRow"))
+    }
+
+    // GeometryReader { geometry in ... }
+    registry.registerType("GeometryReader") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        let closure = args.first(where: { if case .closure = $0 { return true }; return false })
+        if let closure {
+            let view = AnyView(GeometryReader { proxy in
+                // Pass geometry size as a dictionary to the closure
+                let size: Value = .dictionary([
+                    "width": .double(Double(proxy.size.width)),
+                    "height": .double(Double(proxy.size.height))
+                ])
+                if let result = try? vm.invokeValue(closure, args: [size]),
+                   case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                    box.view
+                }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "GeometryReader"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(EmptyView())), typeName: "GeometryReader"))
+    }
 }
 
 // MARK: - Helpers

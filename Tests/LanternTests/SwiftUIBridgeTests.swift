@@ -224,6 +224,215 @@ import LanternBridge
     }
 }
 
+// MARK: - New View Constructor Tests
+
+@Test func pickerConstructor() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Picker(\"Choose\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Picker") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func datePickerConstructor() {
+    let interp = Interpreter()
+    let result = interp.run(source: "DatePicker(\"Date\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "DatePicker") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func stepperConstructor() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Stepper(\"Count\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Stepper") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func linkConstructor() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Link(\"Apple\", \"https://apple.com\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Link") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func menuConstructor() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Menu(\"Options\") { Text(\"A\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Menu") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func formContainer() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Form { Text(\"Setting\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Form") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func sectionContainer() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Section { Text(\"Item\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Section") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func lazyVStackContainer() {
+    let interp = Interpreter()
+    let result = interp.run(source: "LazyVStack { Text(\"Lazy\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "LazyVStack") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func lazyHStackContainer() {
+    let interp = Interpreter()
+    let result = interp.run(source: "LazyHStack { Text(\"Lazy\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "LazyHStack") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func gridContainer() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Grid { Text(\"Cell\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Grid") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func geometryReaderContainer() {
+    let interp = Interpreter()
+    let result = interp.run(source: "GeometryReader { Text(\"geo\") }")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "GeometryReader") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func gaugeConstructor() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Gauge(0.7)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Gauge") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+// MARK: - New Modifier Tests
+
+@Test func modifierTint() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").tint(\"blue\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierBlur() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").blur(5.0)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierIgnoresSafeArea() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").ignoresSafeArea()")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierDisabled() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").disabled(true)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierOverlay() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").overlay(\"red\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierFrame() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").frame(100.0)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierShadow() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").shadow(10.0)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierCornerRadius() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").cornerRadius(8.0)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierBorder() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").border(\"red\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierItalic() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").italic()")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierUnderline() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").underline()")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierStrikethrough() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").strikethrough()")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierScaleEffect() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").scaleEffect(2.0)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func modifierRotationEffect() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").rotationEffect(45.0)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+// MARK: - Global Registration Check (all new types)
+
+@Test func allNewTypesRegistered() {
+    let interp = Interpreter()
+    let vm = (interp.debugger as! Debugger).vm
+    for name in ["Picker", "DatePicker", "Stepper", "Link", "Menu", "Gauge",
+                  "LabeledContent", "Form", "Section", "LazyVStack", "LazyHStack",
+                  "Grid", "GridRow", "GeometryReader"] {
+        #expect(vm.environment.getGlobal(name) != nil, "\(name) should be registered")
+    }
+}
+
+@Test func allNewModifiersRegistered() {
+    let interp = Interpreter()
+    let vm = (interp.debugger as! Debugger).vm
+    for mod in ["tint", "blur", "ignoresSafeArea", "zIndex",
+                "allowsHitTesting", "accentColor"] {
+        #expect(vm.environment.getGlobal("View.\(mod)") != nil, "View.\(mod) should be registered")
+    }
+}
+
+// MARK: - @State Tests
+
 @Test func stateInstanceCreation() {
     let interp = Interpreter()
     let _ = interp.run(source: """

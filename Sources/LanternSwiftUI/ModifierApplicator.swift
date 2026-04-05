@@ -146,9 +146,16 @@ public struct ModifierApplicator {
             // These require closure wrapping, handled at a higher level
             modified = AnyView(view)
 
-        // Interaction — closures handled by the bridge
+        // Interaction
         case "onTapGesture":
-            modified = AnyView(view)
+            modified = AnyView(view) // Closure handled at bridge level
+
+        case "allowsHitTesting":
+            let allow = arguments.first?.boolValue ?? true
+            modified = AnyView(view.allowsHitTesting(allow))
+
+        case "contentShape":
+            modified = AnyView(view.contentShape(Rectangle()))
 
         // List styling
         case "listStyle":
@@ -165,6 +172,37 @@ public struct ModifierApplicator {
         // Animation
         case "animation":
             modified = AnyView(view.animation(.default, value: true))
+
+        // Color
+        case "tint":
+            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+                modified = AnyView(view.tint(color))
+            } else {
+                modified = AnyView(view)
+            }
+
+        case "accentColor":
+            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+                modified = AnyView(view.tint(color)) // accentColor deprecated, use tint
+            } else {
+                modified = AnyView(view)
+            }
+
+        // Layout
+        case "ignoresSafeArea":
+            modified = AnyView(view.ignoresSafeArea())
+
+        case "zIndex":
+            let z = arguments.first?.doubleValue ?? 0
+            modified = AnyView(view.zIndex(z))
+
+        // Effects
+        case "blur":
+            let radius = arguments.first?.doubleValue ?? 3
+            modified = AnyView(view.blur(radius: CGFloat(radius)))
+
+        case "mask":
+            modified = AnyView(view) // Requires shape argument — pass through
 
         default:
             // Unknown modifier — pass through unchanged
