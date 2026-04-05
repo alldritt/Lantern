@@ -28,8 +28,17 @@ struct ConformanceRunner {
 
             for test in tests {
                 let (captured, error) = runTestWithTimeout(test, timeoutMs: 500)
+                let expectsError = test.expectedOutput.hasPrefix("ERROR")
 
-                if let error {
+                if expectsError {
+                    // Negative test: expect a compile-time or runtime error
+                    if error != nil {
+                        filePassed += 1 // Got an error as expected
+                    } else {
+                        fileFailed += 1
+                        fileErrors.append("  \(test.name): expected error but succeeded with [\(captured.prefix(40))]")
+                    }
+                } else if let error {
                     fileFailed += 1
                     fileErrors.append("  \(test.name): \(error.prefix(60))")
                 } else if captured == test.expectedOutput {
