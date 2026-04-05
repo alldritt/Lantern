@@ -38,6 +38,12 @@ public final class Interpreter {
         registerBuiltins()
         #if canImport(SwiftUI)
         registerSwiftUIBridge(on: bridge, vm: vm)
+        #if canImport(Charts)
+        registerChartsBridge(on: bridge, vm: vm)
+        #endif
+        #if canImport(MapKit)
+        registerMapKitBridge(on: bridge, vm: vm)
+        #endif
         #endif
         registerBridgeTypesAsGlobals()
         // Wire bridge dispatch into VM for runtime method/property lookup

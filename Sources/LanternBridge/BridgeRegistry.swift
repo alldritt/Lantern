@@ -51,6 +51,8 @@ public final class BridgeRegistry: @unchecked Sendable {
         registerURLBridge(on: registry)
         registerUUIDBridge(on: registry)
         registerUserDefaultsBridge(on: registry)
+        registerJSONBridge(on: registry)
+        registerTimerBridge(on: registry)
         return registry
     }
 
