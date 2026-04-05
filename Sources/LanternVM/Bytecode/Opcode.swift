@@ -40,6 +40,7 @@ public enum Opcode: UInt8, Sendable, CaseIterable {
     case loadGlobal     = 0x3C  // u16 name index
     case storeGlobal    = 0x3D  // u16 name index
     case captureLocal   = 0x3E  // u16 slot — ensure cell, push .cell for CLOSURE
+    case loadLastSelf   = 0x3F  // push lastReturnedSelf (mutating struct method result)
 
     // MARK: Control Flow
     case jump           = 0x40  // i16 offset
@@ -115,6 +116,7 @@ extension Opcode {
              .pop, .dup,
              .return_, .returnVoid,
              .getIndex, .setIndex,
+             .loadLastSelf,
              .wrapOptional, .unwrapOptional, .nilCoalesce,
              .throw_, .deferPop, .popHandler,
              .viewCollect,

@@ -50,6 +50,11 @@ public final class VM: @unchecked Sendable {
     /// Built-in method registry for Array, String, Dictionary, Range, Optional.
     private let builtinMethods = BuiltinMethodRegistry()
 
+    /// After a method call returns, this holds the modified `self` value
+    /// (slot 0 from the callee's frame) for mutating struct methods.
+    /// The callMethod store-back logic reads this.
+    private(set) var lastReturnedSelf: Value?
+
     // MARK: - Init
 
     public init(maxCallDepth: Int = defaultMaxCallDepth, executionLimit: Int = defaultExecutionLimit) {
@@ -210,6 +215,10 @@ public final class VM: @unchecked Sendable {
             while stack.count <= idx { try stack.push(.nil_) }
             stack[idx] = value
             ip += 3
+        case .loadLastSelf:
+            // Push the modified self from the last mutating struct method return
+            try stack.push(lastReturnedSelf ?? .nil_)
+            ip += 1
         case .captureLocal:
             // Ensure slot has a CaptureCell, push the .cell itself for CLOSURE
             guard let slot = readU16(at: ip + 1) else { throw decodeError() }
@@ -680,6 +689,13 @@ public final class VM: @unchecked Sendable {
 
     private func returnFromFunction() throws {
         guard let frame = callStack.popLast() else { state = .halted; return }
+        // Save self (slot 0) for mutating method store-back
+        let selfValue = stack[frame.basePointer]
+        if case .instance(let ref) = selfValue, ref.kind == .struct {
+            lastReturnedSelf = selfValue
+        } else {
+            lastReturnedSelf = nil
+        }
         // Truncate stack: remove locals, args, and the callee (1 below basePointer)
         stack.truncate(to: max(0, frame.basePointer - 1))
         ip = frame.ip

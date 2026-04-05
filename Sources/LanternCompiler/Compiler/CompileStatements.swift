@@ -8,12 +8,20 @@ extension BytecodeCompiler {
             compileVariableDeclaration(varDecl)
         } else if let exprStmt = stmt as? ExpressionStatementNode {
             // Check for mutating method calls that need store-back
+            // Includes built-in mutating methods AND user-defined mutating methods
             if let call = exprStmt.expression as? FunctionCallNode,
                let memberAccess = call.callee as? MemberAccessNode,
-               isMutatingMethod(memberAccess.member) {
+               (isMutatingMethod(memberAccess.member) || isUserMutatingMethod(memberAccess)) {
                 // Compile the method call
+                let isUserDefined = isUserMutatingMethod(memberAccess)
                 compileExpression(exprStmt.expression)
-                // Store the result back to the receiver variable
+                // For user-defined mutating methods, the return value is the method result (e.g., Int?),
+                // not the modified struct. Pop it, then load the modified self from lastReturnedSelf.
+                if isUserDefined {
+                    chunk.write(.pop) // pop the method return value
+                    chunk.write(.loadLastSelf) // push the modified struct
+                }
+                // Store the modified value back to the receiver variable
                 if let receiver = memberAccess.object as? IdentifierNode {
                     if let local = scopeTracker.resolve(receiver.name) {
                         Instruction.storeLocal(local.slot, into: &chunk)
@@ -204,6 +212,20 @@ extension BytecodeCompiler {
         if let binding = stmt.optionalBinding {
             // if let x = expr { ... }
             compileExpression(binding.value)
+            // If the binding value is a mutating method call, store back the modified receiver
+            if let call = binding.value as? FunctionCallNode,
+               let memberAccess = call.callee as? MemberAccessNode,
+               isUserMutatingMethod(memberAccess),
+               let receiver = memberAccess.object as? IdentifierNode {
+                // The method return value is on top of stack. Save it, store back self, restore.
+                chunk.write(.loadLastSelf)
+                if let local = scopeTracker.resolve(receiver.name) {
+                    Instruction.storeLocal(local.slot, into: &chunk)
+                } else {
+                    let ni = chunk.constantPool.addString(receiver.name)
+                    Instruction.storeGlobal(ni, into: &chunk)
+                }
+            }
             chunk.write(.dup)
             let jumpElse = Instruction.jumpIfFalse(into: &chunk)
 

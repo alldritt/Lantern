@@ -150,6 +150,17 @@ extension BytecodeCompiler {
         Self.mutatingMethods.contains(name)
     }
 
+    /// Check if a member access refers to a user-defined mutating method.
+    /// Resolves the receiver's type from the symbol table and checks userMutatingMethods.
+    func isUserMutatingMethod(_ memberAccess: MemberAccessNode) -> Bool {
+        let methodName = memberAccess.member
+        // Check all registered types for this method name
+        for (_, methods) in userMutatingMethods {
+            if methods.contains(methodName) { return true }
+        }
+        return false
+    }
+
     func isKnownGlobal(_ name: String) -> Bool {
         Self.knownBuiltins.contains(name)
     }

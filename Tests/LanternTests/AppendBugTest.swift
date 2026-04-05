@@ -51,6 +51,24 @@ struct AppendBugTests {
         print("  append(a[a.count-1]): steps=\(steps) out='\(out)' err=\(err ?? "none")")
     }
 
+    @Test func ifLetMutatingMethod() {
+        let (out, steps, err) = run("""
+        struct S {
+            var items: [Int] = [10, 20]
+            mutating func take() -> Int? {
+                if items.isEmpty { return nil }
+                return items.removeLast()
+            }
+        }
+        var s = S()
+        if let x = s.take() { print(x) }
+        if let y = s.take() { print(y) }
+        if let z = s.take() { print(z) } else { print("nil") }
+        print(s.items)
+        """)
+        print("  ifLetMutating: steps=\(steps) out='\(out)' err=\(err ?? "none")")
+    }
+
     @Test func appendWithCountMinusOnePlusCountMinusTwo() {
         let (out, steps, err) = run("var a = [10, 20]; a.append(a[a.count - 1] + a[a.count - 2]); print(a)")
         print("  append(a[cnt-1]+a[cnt-2]): steps=\(steps) out='\(out)' err=\(err ?? "none")")

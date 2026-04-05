@@ -29,6 +29,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
     /// Captured variable names in order (built during closure body compilation)
     var capturedNames: [String] = []
 
+    /// Tracks user-defined mutating methods: [typeName: Set<methodName>]
+    var userMutatingMethods: [String: Set<String>] = [:]
+
     var currentFileName: String = "<input>"
     var sourceText: String = ""
 

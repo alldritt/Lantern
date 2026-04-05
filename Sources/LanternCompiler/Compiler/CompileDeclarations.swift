@@ -156,13 +156,16 @@ extension BytecodeCompiler {
             }
         }
 
-        // Compile methods and computed properties
+        // Compile methods and computed properties; track mutating methods for store-back
         for member in decl.members {
             if let funcDecl = member as? FunctionDeclarationNode {
                 if funcDecl.isStatic {
                     compileStaticMethod(funcDecl, typeName: decl.name)
                 } else {
                     compileTypeMethod(funcDecl, typeName: decl.name)
+                    if funcDecl.isMutating {
+                        userMutatingMethods[decl.name, default: []].insert(funcDecl.name)
+                    }
                 }
             } else if let computed = member as? ComputedPropertyNode {
                 compileComputedProperty(computed, typeName: decl.name)
