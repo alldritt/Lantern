@@ -49,6 +49,14 @@ public final class Interpreter {
         registerBridgeTypesAsGlobals()
         // Tell the compiler about bridge type names so they aren't treated as self.property
         compiler.externalGlobals = Set(bridge.registeredTypes)
+        // Tell the compiler about static members for implicit member resolution (.title → Font.title)
+        var staticMembers: Set<String> = []
+        for typeName in bridge.registeredTypes {
+            for propName in bridge.registeredStaticProperties(forType: typeName) {
+                staticMembers.insert("\(typeName).\(propName)")
+            }
+        }
+        compiler.externalStaticMembers = staticMembers
         // Wire bridge dispatch into VM for runtime method/property lookup
         vm.bridgeMethodLookup = { [weak bridge] typeName, selector in
             bridge?.lookupMethod(typeName: typeName, selector: selector)

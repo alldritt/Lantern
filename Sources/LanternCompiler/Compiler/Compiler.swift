@@ -49,6 +49,9 @@ public final class BytecodeCompiler: @unchecked Sendable {
     /// not as implicit self.property inside type method bodies.
     public var externalGlobals: Set<String> = []
 
+    /// Qualified names of static members (e.g. "Font.title") for implicit member resolution.
+    public var externalStaticMembers: Set<String> = []
+
     public init() {}
 
     // MARK: - Public API

@@ -38,6 +38,11 @@ extension BytecodeCompiler {
                 let qualifiedName = "\(typeName).\(member.member)"
                 let nameIndex = chunk.constantPool.addString(qualifiedName)
                 Instruction.loadGlobal(nameIndex, into: &chunk)
+            } else if member.object is SelfNode,
+                      let qualifiedName = resolveImplicitMember(member.member) {
+                // Implicit member access like `.title` resolving to a bridge static property
+                let nameIndex = chunk.constantPool.addString(qualifiedName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
             } else {
                 compileExpression(member.object)
                 let nameIndex = chunk.constantPool.addPropertyName(member.member)
@@ -163,6 +168,20 @@ extension BytecodeCompiler {
 
     func isKnownGlobal(_ name: String) -> Bool {
         Self.knownBuiltins.contains(name) || externalGlobals.contains(name)
+    }
+
+    /// Resolve an implicit member name (e.g. "title" from `.title`) to a qualified global
+    /// like "Font.title". Returns the qualified name if found, nil otherwise.
+    func resolveImplicitMember(_ name: String) -> String? {
+        for typeName in externalGlobals {
+            let qualified = "\(typeName).\(name)"
+            // Check if this qualified name is registered (it will be in the VM environment)
+            // We can't check the VM from the compiler, but we can check externalStaticMembers
+            if externalStaticMembers.contains(qualified) {
+                return qualified
+            }
+        }
+        return nil
     }
 
     func compileIdentifier(_ ident: IdentifierNode) {

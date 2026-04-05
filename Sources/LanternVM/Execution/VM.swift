@@ -946,6 +946,13 @@ public final class VM: @unchecked Sendable {
             if let global = environment.getGlobal(name) {
                 return global
             }
+            // Implicit member access (.title, .red, etc.) — try type-qualified globals
+            // This handles Swift's implicit member syntax where the type is inferred
+            for prefix in ["Font", "Color", "Edge", "Alignment", "TextAlignment", "HorizontalAlignment", "VerticalAlignment"] {
+                if let qualified = environment.getGlobal("\(prefix).\(name)") {
+                    return qualified
+                }
+            }
             throw InterpreterError.undefinedProperty(name, on: ref.typeName, at: loc())
         case .enumCase(let ref):
             switch name {
