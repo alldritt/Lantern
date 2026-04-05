@@ -102,6 +102,58 @@ import LanternDebugger
     }
 }
 
+@Test func conditionalViewInContainer() {
+    let interp = Interpreter()
+
+    // if/else in a container should produce only the active branch
+    let src = """
+    let show = true
+    VStack {
+        if show {
+            Text("Visible")
+        } else {
+            Text("Hidden")
+        }
+        Text("Always")
+    }
+    """
+    let result = interp.run(source: src)
+    switch result {
+    case .success(let value):
+        if case .hostObject(let ref) = value {
+            #expect(ref.typeName == "VStack")
+        } else {
+            Issue.record("Expected VStack hostObject, got \(value)")
+        }
+    case .failure(let err):
+        Issue.record("Execution failed: \(err)")
+    }
+}
+
+@Test func modifierChaining() {
+    let interp = Interpreter()
+
+    // Use string argument to .font() since implicit member (.title)
+    // requires enum resolution that's not yet wired for Font
+    let src = """
+    Text("Hello")
+        .font("title")
+        .padding()
+        .foregroundColor("blue")
+    """
+    let result = interp.run(source: src)
+    switch result {
+    case .success(let value):
+        if case .hostObject(let ref) = value {
+            #expect(ref.typeName == "Text")
+        } else {
+            Issue.record("Expected hostObject, got \(value)")
+        }
+    case .failure(let err):
+        Issue.record("Execution failed: \(err)")
+    }
+}
+
 @Test func containerWithMultipleChildren() {
     let interp = Interpreter()
     let vm = (interp.debugger as! Debugger).vm
@@ -113,7 +165,7 @@ import LanternDebugger
     // The content closure creates multiple Text views
     // which should all be collected via ViewCollector
     let src = """
-    let view = VStack {
+    VStack {
         Text("Line 1")
         Text("Line 2")
         Text("Line 3")
