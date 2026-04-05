@@ -505,9 +505,14 @@ public final class VM: @unchecked Sendable {
             swiftUIContext?.stateStore.set(name, value)
             ip += 3
         case .bindingCreate:
-            // Push a marker value that the bridge can recognize as a binding reference
+            // Create a binding reference that the bridge can convert to Binding<T>
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
-            try stack.push(.string("__binding:\(name)"))
+            if let ctx = swiftUIContext {
+                let ref = BindingRef(stateStore: ctx.stateStore, key: name)
+                try stack.push(.hostObject(HostObjectRef(object: ref, typeName: "Binding")))
+            } else {
+                try stack.push(.nil_)
+            }
             ip += 3
         case .publishSet:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.propertyName(at: ni) else { throw decodeError() }

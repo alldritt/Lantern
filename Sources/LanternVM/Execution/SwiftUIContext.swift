@@ -29,3 +29,15 @@ public final class SwiftUIContext: @unchecked Sendable {
         self.viewCollector = viewCollector
     }
 }
+
+/// A reference to a @State binding, carrying the state store and key.
+/// The SwiftUI bridge converts this to a real Binding<T> at the call site.
+public final class BindingRef: @unchecked Sendable {
+    public let stateStore: StateStoreProtocol
+    public let key: String
+
+    public init(stateStore: StateStoreProtocol, key: String) {
+        self.stateStore = stateStore
+        self.key = key
+    }
+}

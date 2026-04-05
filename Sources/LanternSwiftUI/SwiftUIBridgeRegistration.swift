@@ -70,6 +70,12 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
 
     // MARK: - Container View Constructors (need VM for trailing closures)
 
+    // MARK: - Binding-Aware Views
+
+    registerBindingViews(on: registry)
+
+    // MARK: - Container + Interactive Views (need VM)
+
     if let vm = vm {
         registerContainerTypes(on: registry, vm: vm)
         registerButton(on: registry, vm: vm)
@@ -95,6 +101,110 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
             return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
         }
     }
+
+    // MARK: - Lifecycle Modifiers (need VM for closure invocation)
+
+    if let vm = vm {
+        registerLifecycleModifiers(on: registry, vm: vm)
+    }
+}
+
+// MARK: - Lifecycle Modifiers
+
+private func registerLifecycleModifiers(on registry: BridgeRegistry, vm: VM) {
+    registry.registerMethod(typeName: "View", selector: "onAppear", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.onAppear { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    registry.registerMethod(typeName: "View", selector: "onDisappear", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.onDisappear { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    registry.registerMethod(typeName: "View", selector: "onTapGesture", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.onTapGesture { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+}
+
+// MARK: - Binding-Aware Views
+
+private func registerBindingViews(on registry: BridgeRegistry) {
+    registry.registerType("Toggle") { args in
+        // Toggle("Label", isOn: $binding)
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
+        // Find the binding argument
+        if let bindingArg = args.first(where: { isBindingRef($0) }),
+           let bindingRef = extractBindingRef(bindingArg) {
+            let binding = Binding<Bool>(
+                get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
+                set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
+            )
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(Toggle(title, isOn: binding))), typeName: "Toggle"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Toggle(title, isOn: .constant(false)))), typeName: "Toggle"))
+    }
+
+    registry.registerType("TextField") { args in
+        // TextField("Placeholder", text: $binding)
+        let title = args.first?.stringValue ?? ""
+        if args.count >= 2, let bindingRef = extractBindingRef(args[1]) {
+            let binding = Binding<String>(
+                get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
+                set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
+            )
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextField(title, text: binding))), typeName: "TextField"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextField(title, text: .constant("")))), typeName: "TextField"))
+    }
+
+    registry.registerType("TextEditor") { args in
+        if let bindingRef = extractBindingRef(args.first ?? .nil_) {
+            let binding = Binding<String>(
+                get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
+                set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
+            )
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextEditor(text: binding))), typeName: "TextEditor"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextEditor(text: .constant("")))), typeName: "TextEditor"))
+    }
+
+    registry.registerType("Slider") { args in
+        // Slider(value: $binding, in: 0...100)
+        if let bindingRef = extractBindingRef(args.first ?? .nil_) {
+            let binding = Binding<Double>(
+                get: { bindingRef.stateStore.get(bindingRef.key).doubleValue ?? 0 },
+                set: { bindingRef.stateStore.set(bindingRef.key, .double($0)) }
+            )
+            let range: ClosedRange<Double>
+            if args.count >= 2, case .range(let lo, let hi, _) = args[1] {
+                range = Double(lo)...Double(hi)
+            } else {
+                range = 0...1
+            }
+            return .hostObject(HostObjectRef(object: ViewBox(AnyView(Slider(value: binding, in: range))), typeName: "Slider"))
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Slider(value: .constant(0.5)))), typeName: "Slider"))
+    }
+}
+
+private func isBindingRef(_ value: Value) -> Bool {
+    if case .hostObject(let ref) = value, ref.object is BindingRef { return true }
+    return false
+}
+
+private func extractBindingRef(_ value: Value) -> BindingRef? {
+    if case .hostObject(let ref) = value, let binding = ref.object as? BindingRef {
+        return binding
+    }
+    return nil
 }
 
 // MARK: - Container Types

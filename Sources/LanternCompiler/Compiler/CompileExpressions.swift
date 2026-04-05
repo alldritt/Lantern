@@ -155,6 +155,17 @@ extension BytecodeCompiler {
     }
 
     func compileIdentifier(_ ident: IdentifierNode) {
+        // $binding syntax: $count → bindingCreate("count")
+        if ident.name.hasPrefix("$") && isCompilingViewType {
+            let propName = String(ident.name.dropFirst())
+            if statePropertyNames.contains(propName) {
+                let nameIndex = chunk.constantPool.addString(propName)
+                chunk.write(.bindingCreate)
+                chunk.writeU16(nameIndex)
+                return
+            }
+        }
+
         // Check locals first (inner to outer scope)
         if let local = scopeTracker.resolve(ident.name) {
             Instruction.loadLocal(local.slot, into: &chunk)
