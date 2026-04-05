@@ -75,6 +75,10 @@ public final class Interpreter {
     /// Populated by the compiler's appStorageProperties dict.
     public var appStorageMappings: [String: [String: String]] = [:] // [typeName: [propName: udKey]]
 
+    /// Persistent state stores for view instances, keyed by InstanceRef identity.
+    /// Keeps the store alive across SwiftUI view recreations.
+    private var stateStores: [ObjectIdentifier: LanternStateStore] = [:]
+
     /// Create an ObservableObject wrapper for an interpreted class instance.
     /// Use this when passing an interpreted class as @ObservedObject to a view.
     public func wrapObservable(_ instance: InstanceRef) -> LanternObservableWrapper {
@@ -444,9 +448,16 @@ public final class Interpreter {
     #if canImport(SwiftUI)
     /// Create a native SwiftUI view from an interpreted view instance.
     public func makeView(from instance: InstanceRef) -> ViewStub {
-        let stub = ViewStub(vm: vm, instance: instance,
-                            appStorageKeys: compiler.allAppStorageMappings[instance.typeName] ?? [:])
-        return stub
+        let id = ObjectIdentifier(instance)
+        let store: LanternStateStore
+        if let existing = stateStores[id] {
+            store = existing
+        } else {
+            store = LanternStateStore()
+            stateStores[id] = store
+        }
+        return ViewStub(vm: vm, instance: instance, stateStore: store,
+                         appStorageKeys: compiler.allAppStorageMappings[instance.typeName] ?? [:])
     }
 
     /// The current view descriptor tree from the last view body evaluation.

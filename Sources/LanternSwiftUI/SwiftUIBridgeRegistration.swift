@@ -168,32 +168,50 @@ private func registerLifecycleModifiers(on registry: BridgeRegistry, vm: VM) {
     registry.registerMethod(typeName: "View", selector: "onAppear", parameterLabels: []) { [weak vm] receiver, args in
         guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
               let closure = args.first else { return receiver }
-        let modified = AnyView(box.view.onAppear { _ = try? vm.invokeValue(closure, args: []) })
+        let ctx = vm.swiftUIContext
+        let modified = AnyView(box.view.onAppear {
+            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
+            defer { vm.swiftUIContext = prev }
+            _ = try? vm.invokeValue(closure, args: [])
+        })
         return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
     }
 
     registry.registerMethod(typeName: "View", selector: "onDisappear", parameterLabels: []) { [weak vm] receiver, args in
         guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
               let closure = args.first else { return receiver }
-        let modified = AnyView(box.view.onDisappear { _ = try? vm.invokeValue(closure, args: []) })
+        let ctx = vm.swiftUIContext
+        let modified = AnyView(box.view.onDisappear {
+            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
+            defer { vm.swiftUIContext = prev }
+            _ = try? vm.invokeValue(closure, args: [])
+        })
         return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
     }
 
     registry.registerMethod(typeName: "View", selector: "onTapGesture", parameterLabels: []) { [weak vm] receiver, args in
         guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
               let closure = args.first else { return receiver }
-        let modified = AnyView(box.view.onTapGesture { _ = try? vm.invokeValue(closure, args: []) })
+        let ctx = vm.swiftUIContext
+        let modified = AnyView(box.view.onTapGesture {
+            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
+            defer { vm.swiftUIContext = prev }
+            _ = try? vm.invokeValue(closure, args: [])
+        })
         return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
     }
 
     // .onChange(of: value) { closure } — simplified: takes closure only
     registry.registerMethod(typeName: "View", selector: "onChange", parameterLabels: []) { [weak vm] receiver, args in
         guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
-        // Find the closure argument
         let closure = args.first(where: { if case .closure = $0 { return true }; return false })
         guard let closure else { return receiver }
-        // Simplified: trigger on any change (uses a dummy value)
-        let modified = AnyView(box.view.onAppear { _ = try? vm.invokeValue(closure, args: []) })
+        let ctx = vm.swiftUIContext
+        let modified = AnyView(box.view.onAppear {
+            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
+            defer { vm.swiftUIContext = prev }
+            _ = try? vm.invokeValue(closure, args: [])
+        })
         return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
     }
 
@@ -201,7 +219,12 @@ private func registerLifecycleModifiers(on registry: BridgeRegistry, vm: VM) {
     registry.registerMethod(typeName: "View", selector: "task", parameterLabels: []) { [weak vm] receiver, args in
         guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
               let closure = args.first else { return receiver }
-        let modified = AnyView(box.view.task { _ = try? vm.invokeValue(closure, args: []) })
+        let ctx = vm.swiftUIContext
+        let modified = AnyView(box.view.task {
+            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
+            defer { vm.swiftUIContext = prev }
+            _ = try? vm.invokeValue(closure, args: [])
+        })
         return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
     }
 }

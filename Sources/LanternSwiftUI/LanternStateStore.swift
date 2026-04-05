@@ -7,7 +7,7 @@ import LanternVM
 ///
 /// Also supports @AppStorage: properties mapped to UserDefaults keys are
 /// read/written through UserDefaults and synced on change.
-public final class LanternStateStore: ObservableObject, StateStoreProtocol {
+public final class LanternStateStore: ObservableObject, StateStoreProtocol, @unchecked Sendable {
     @Published public var values: [String: Value] = [:]
 
     /// Maps @State property names to UserDefaults keys for @AppStorage support.

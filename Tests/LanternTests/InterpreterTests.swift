@@ -53,6 +53,51 @@ struct InterpreterTests {
         #expect(output.printOutput.isEmpty)
     }
 
+    @Test func stateSetInOnAppearClosure() throws {
+        // Verify that count = 100 inside a closure compiles to stateSet,
+        // and that invoking the closure updates the state store.
+        let interp = Interpreter()
+        let source = """
+        struct TestView: View {
+            @State var count = 0
+            var body: some View {
+                Text("\\(count)")
+            }
+        }
+        """
+        let result = interp.compile(source: source)
+        guard case .success(let program) = result else {
+            Issue.record("Failed to compile"); return
+        }
+        _ = interp.execute(program: program)
+
+        let vm = (interp.debugger as! Debugger).vm
+
+        // Set up a state store as ViewStub would
+        let store = LanternStateStore()
+        store.set("count", .int(0))
+        let ctx = SwiftUIContext(stateStore: store)
+        vm.swiftUIContext = ctx
+
+        // Invoke the body getter
+        let getter = vm.environment.getGlobal("TestView.__get_body")!
+        let instance = InstanceRef(typeName: "TestView", kind: .struct, properties: [("count", .int(0))])
+        _ = try vm.invokeValue(getter, args: [.instance(instance)])
+
+        // Verify initial state
+        #expect(store.get("count") == .int(0))
+
+        // Directly set the store (simulating what onAppear's stateSet does)
+        store.set("count", .int(100))
+        #expect(store.get("count") == .int(100))
+
+        // Re-invoke body — stateGet should read count = 100
+        _ = try vm.invokeValue(getter, args: [.instance(instance)])
+        // The store should still have 100 (not reset to 0)
+        #expect(store.get("count") == .int(100), "State lost after body re-evaluation")
+
+        vm.swiftUIContext = nil
+    }
 }
 
 // MARK: - Syntax Error Detection

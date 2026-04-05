@@ -9,7 +9,7 @@ public struct ViewStub: View {
     let instance: InstanceRef
     let appStorageKeys: [String: String]
 
-    @StateObject private var stateStore = LanternStateStore()
+    @ObservedObject var stateStore: LanternStateStore
     @SwiftUI.Environment(\.colorScheme) private var colorScheme
     @SwiftUI.Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -18,9 +18,10 @@ public struct ViewStub: View {
     /// The view descriptor tree from the last evaluation, for debugger inspection.
     public var lastDescriptor: ViewDescriptor? { descriptorBuilder.rootDescriptor }
 
-    public init(vm: VM, instance: InstanceRef, appStorageKeys: [String: String] = [:]) {
+    public init(vm: VM, instance: InstanceRef, stateStore: LanternStateStore = LanternStateStore(), appStorageKeys: [String: String] = [:]) {
         self.vm = vm
         self.instance = instance
+        self.stateStore = stateStore
         self.appStorageKeys = appStorageKeys
     }
 
