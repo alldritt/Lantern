@@ -99,3 +99,14 @@ size = "large"
 }
 print(size)
 // END
+
+// TEST: uninitializedLetUsedBeforeInit
+// EXPECT: ERROR
+// In Swift, using a let before all paths initialize it is a compile error.
+// Lantern should detect this and produce an error.
+let unset: String
+if false {
+unset = "never"
+}
+print(unset)
+// END
