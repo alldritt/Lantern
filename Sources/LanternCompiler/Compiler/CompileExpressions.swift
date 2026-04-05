@@ -155,13 +155,25 @@ extension BytecodeCompiler {
     }
 
     func compileIdentifier(_ ident: IdentifierNode) {
-        // $binding syntax: $count → bindingCreate("count")
+        // $binding syntax: $count → bindingCreate("count") for @State,
+        // or load the BindingRef property for @Binding
         if ident.name.hasPrefix("$") && isCompilingViewType {
             let propName = String(ident.name.dropFirst())
             if statePropertyNames.contains(propName) {
                 let nameIndex = chunk.constantPool.addString(propName)
                 chunk.write(.bindingCreate)
                 chunk.writeU16(nameIndex)
+                return
+            }
+            if bindingPropertyNames.contains(propName) {
+                // @Binding: load the BindingRef from the instance property
+                if let selfLocal = scopeTracker.resolve("self") {
+                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                } else {
+                    Instruction.loadLocal(0, into: &chunk)
+                }
+                let nameIndex = chunk.constantPool.addPropertyName(propName)
+                Instruction.getProperty(nameIndex, into: &chunk)
                 return
             }
         }
@@ -182,11 +194,22 @@ extension BytecodeCompiler {
                     && symbolTable.lookup(ident.name) == nil
                     && !isKnownGlobal(ident.name) {
             // Inside a type method body — unresolved identifiers are implicit self.property
-            // For @State properties in View types, use stateGet instead
             if isCompilingViewType && statePropertyNames.contains(ident.name) {
+                // @State: read from state store
                 let nameIndex = chunk.constantPool.addString(ident.name)
                 chunk.write(.stateGet)
                 chunk.writeU16(nameIndex)
+            } else if isCompilingViewType && bindingPropertyNames.contains(ident.name) {
+                // @Binding: load BindingRef from instance, read through it
+                if let selfLocal = scopeTracker.resolve("self") {
+                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                } else {
+                    Instruction.loadLocal(0, into: &chunk)
+                }
+                let nameIndex = chunk.constantPool.addPropertyName(ident.name)
+                Instruction.getProperty(nameIndex, into: &chunk)
+                // The property value is a BindingRef — the VM's getProperty
+                // will read through it transparently
             } else {
                 if let selfLocal = scopeTracker.resolve("self") {
                     Instruction.loadLocal(selfLocal.slot, into: &chunk)

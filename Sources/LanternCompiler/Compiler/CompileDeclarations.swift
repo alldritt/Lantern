@@ -119,11 +119,13 @@ extension BytecodeCompiler {
         emitLocation(decl.location)
         let typeIndex = chunk.constantPool.addTypeName(decl.name)
 
-        // Detect View conformance and @State properties
+        // Detect View conformance and @State/@Binding properties
         let savedIsViewType = isCompilingViewType
         let savedStateProps = statePropertyNames
+        let savedBindingProps = bindingPropertyNames
         isCompilingViewType = decl.conformances.contains("View")
         statePropertyNames = []
+        bindingPropertyNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -133,9 +135,11 @@ extension BytecodeCompiler {
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
-                // Track @State properties for SwiftUI opcode emission
                 if prop.attributes.contains("State") {
                     statePropertyNames.insert(prop.name)
+                }
+                if prop.attributes.contains("Binding") {
+                    bindingPropertyNames.insert(prop.name)
                 }
             } else if let prop = member as? PropertyNode, !prop.isStatic {
                 properties.append(PropertyInfo(
@@ -145,6 +149,9 @@ extension BytecodeCompiler {
                 ))
                 if prop.attributes.contains("State") {
                     statePropertyNames.insert(prop.name)
+                }
+                if prop.attributes.contains("Binding") {
+                    bindingPropertyNames.insert(prop.name)
                 }
             }
         }
@@ -196,6 +203,7 @@ extension BytecodeCompiler {
         // Restore View type tracking state
         isCompilingViewType = savedIsViewType
         statePropertyNames = savedStateProps
+        bindingPropertyNames = savedBindingProps
     }
 
     func compileClassDeclaration(_ decl: ClassDeclarationNode) {

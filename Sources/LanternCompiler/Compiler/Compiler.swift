@@ -18,6 +18,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
     var compilingMethodOfType: String? = nil
     /// Set of @State property names for the current View type being compiled
     var statePropertyNames: Set<String> = []
+    /// Set of @Binding property names for the current View type
+    var bindingPropertyNames: Set<String> = []
     /// Whether the current type conforms to View (enables @State opcode emission)
     var isCompilingViewType: Bool = false
     /// When true, suppress the pop after expression statements (for implicit closure returns)

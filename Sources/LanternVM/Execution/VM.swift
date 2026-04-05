@@ -289,9 +289,13 @@ public final class VM: @unchecked Sendable {
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.propertyName(at: ni) else { throw decodeError() }
             let val = stack.pop(), inst = stack.pop()
             if case .instance(let ref) = inst {
+                // Check if property holds a BindingRef — write through it
+                if let existing = ref.property(name),
+                   case .hostObject(let hr) = existing, let bindingRef = hr.object as? BindingRef {
+                    bindingRef.stateStore.set(bindingRef.key, val)
+                }
                 // Check for computed property setter
-                let setterName = "\(ref.typeName).__set_\(name)"
-                if let setter = environment.getGlobal(setterName) {
+                else if let setter = environment.getGlobal("\(ref.typeName).__set_\(name)") {
                     _ = try invokeValue(setter, args: [inst, val])
                 } else {
                     ref.setProperty(name, val)
@@ -875,7 +879,13 @@ public final class VM: @unchecked Sendable {
             default: throw InterpreterError.undefinedProperty(name, on: "Dictionary", at: loc())
             }
         case .instance(let ref):
-            if let v = ref.property(name) { return v }
+            if let v = ref.property(name) {
+                // Transparent binding read: if property holds a BindingRef, read through it
+                if case .hostObject(let hr) = v, let bindingRef = hr.object as? BindingRef {
+                    return bindingRef.stateStore.get(bindingRef.key)
+                }
+                return v
+            }
             // Check for computed property getter
             let getterName = "\(ref.typeName).__get_\(name)"
             if let getter = environment.getGlobal(getterName) {
