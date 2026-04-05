@@ -204,6 +204,13 @@ public final class BridgeRegistry: @unchecked Sendable {
         return Array(reg.properties.keys).sorted()
     }
 
+    public func registeredStaticProperties(forType name: String) -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let reg = types[name] else { return [] }
+        return Array(reg.staticProperties.keys).sorted()
+    }
+
     public var registeredFunctions: [String] {
         lock.lock()
         defer { lock.unlock() }

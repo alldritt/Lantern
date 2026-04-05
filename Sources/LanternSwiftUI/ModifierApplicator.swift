@@ -41,7 +41,9 @@ public struct ModifierApplicator {
 
         // Typography
         case "font":
-            if let fontName = arguments.first?.stringValue {
+            if case .enumCase(let ref) = arguments.first, ref.typeName == "Font" {
+                modified = AnyView(view.font(systemFont(ref.caseName)))
+            } else if let fontName = arguments.first?.stringValue {
                 modified = AnyView(view.font(systemFont(fontName)))
             } else {
                 modified = AnyView(view.font(.body))

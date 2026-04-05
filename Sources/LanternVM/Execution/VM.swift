@@ -137,6 +137,7 @@ public final class VM: @unchecked Sendable {
             if case .error = state { return }
         }
         state = .halted
+        delegate?.vmDidHalt(self, result: stackSnapshot.last)
     }
 
     // MARK: - Dispatch
@@ -590,7 +591,7 @@ public final class VM: @unchecked Sendable {
                 try execute(origOp)
             } else { ip += 1 }
         case .halt:
-            state = .halted; return
+            state = .halted; delegate?.vmDidHalt(self, result: stackSnapshot.last); return
         }
     }
 
@@ -720,7 +721,7 @@ public final class VM: @unchecked Sendable {
     }
 
     private func returnFromFunction() throws {
-        guard let frame = callStack.popLast() else { state = .halted; return }
+        guard let frame = callStack.popLast() else { state = .halted; delegate?.vmDidHalt(self, result: stackSnapshot.last); return }
         // Save self (slot 0) for mutating method store-back
         let selfValue = stack[frame.basePointer]
         if case .instance(let ref) = selfValue, ref.kind == .struct {
@@ -1115,6 +1116,7 @@ public protocol VMDelegate: AnyObject {
     func vmDidResume(_ vm: VM)
     func vm(_ vm: VM, didEncounterError error: InterpreterError)
     func vm(_ vm: VM, didProduceOutput text: String)
+    func vmDidHalt(_ vm: VM, result: Value?)
 }
 
 extension VMDelegate {
@@ -1122,6 +1124,7 @@ extension VMDelegate {
     public func vmDidResume(_ vm: VM) {}
     public func vm(_ vm: VM, didEncounterError error: InterpreterError) {}
     public func vm(_ vm: VM, didProduceOutput text: String) {}
+    public func vmDidHalt(_ vm: VM, result: Value?) {}
 }
 
 // Extension to read bytecode from CompiledProgram as if it were a Chunk

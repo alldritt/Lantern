@@ -162,7 +162,7 @@ extension BytecodeCompiler {
     }
 
     func isKnownGlobal(_ name: String) -> Bool {
-        Self.knownBuiltins.contains(name)
+        Self.knownBuiltins.contains(name) || externalGlobals.contains(name)
     }
 
     func compileIdentifier(_ ident: IdentifierNode) {

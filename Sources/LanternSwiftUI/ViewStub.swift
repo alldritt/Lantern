@@ -42,6 +42,13 @@ public struct ViewStub: View {
         ctx.environmentValues["horizontalSizeClass"] = sizeClass == .compact ? .string("compact") : .string("regular")
         #endif
 
+        // Seed @State default values from instance properties (first render only)
+        for name in instance.propertyNames {
+            if !stateStore.contains(name), let value = instance.property(name) {
+                stateStore.set(name, value)
+            }
+        }
+
         vm.swiftUIContext = ctx
         defer { vm.swiftUIContext = previousContext }
 

@@ -11,6 +11,8 @@ public protocol DebuggerInterface: AnyObject {
     func stepInto()
     func stepOut()
     func stepToLine(_ line: Int, file: String)
+    /// Start execution and immediately pause at the first executable statement.
+    func startPaused()
     var isPaused: Bool { get }
     var pausedLocation: SourceLocation? { get }
     var pauseReason: PauseReason? { get }
@@ -31,6 +33,8 @@ public protocol DebuggerInterface: AnyObject {
     func locals(frameIndex: Int) -> [VariableInfo]
     func captures(frameIndex: Int) -> [VariableInfo]
     func globals() -> [VariableInfo]
+    /// The value at the top of the VM stack (last expression result) when paused.
+    var lastExpressionResult: Value? { get }
     func evaluate(expression: String, inFrame frameIndex: Int) -> Result<Value, InterpreterError>
 
     // MARK: - Mutation

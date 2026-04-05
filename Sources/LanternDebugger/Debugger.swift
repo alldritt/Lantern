@@ -39,6 +39,11 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
         vm.run()
     }
 
+    public func startPaused() {
+        vm.stepMode = .into(sourceLine: 0)
+        vm.run()
+    }
+
     public func pause() {
         vm.requestPause()
     }
@@ -137,9 +142,30 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
 
     // MARK: - Inspection
 
+    public var lastExpressionResult: Value? {
+        guard isPaused else { return nil }
+        return vm.stackSnapshot.last
+    }
+
     public func callStack() -> [FrameInfo] {
         var frames: [FrameInfo] = []
         let vmCallStack = vm.callStack
+
+        if vmCallStack.isEmpty {
+            // Synthesize a "main" frame for top-level code
+            let isRunning: Bool
+            if case .running = vm.state { isRunning = true } else { isRunning = false }
+            if isPaused || isRunning {
+                frames.append(FrameInfo(
+                    functionName: "<main>",
+                    sourceLocation: vm.currentSourceLocation,
+                    frameIndex: 0,
+                    isHostFrame: false,
+                    arguments: []
+                ))
+            }
+            return frames
+        }
 
         for (index, frame) in vmCallStack.enumerated().reversed() {
             let location: SourceLocation?
@@ -171,14 +197,25 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
     public func locals(frameIndex: Int) -> [VariableInfo] {
         guard let program = loadedProgram else { return [] }
         let vmCallStack = vm.callStack
-        guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return [] }
 
-        let frame = vmCallStack[frameIndex]
-        let currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
+        let basePointer: Int
+        let currentOffset: Int
+
+        if vmCallStack.isEmpty {
+            // Synthetic main frame — top-level code uses basePointer 0
+            guard frameIndex == 0 else { return [] }
+            basePointer = 0
+            currentOffset = vm.currentIP
+        } else {
+            guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return [] }
+            let frame = vmCallStack[frameIndex]
+            basePointer = frame.basePointer
+            currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
+        }
 
         var result: [VariableInfo] = []
         for record in program.variableTable where record.isInScope(at: currentOffset) {
-            let slotIndex = frame.basePointer + Int(record.slotIndex)
+            let slotIndex = basePointer + Int(record.slotIndex)
             guard slotIndex >= 0 && slotIndex < vm.stack.count else { continue }
             let value = vm.stack[slotIndex]
             result.append(VariableInfo(
@@ -194,6 +231,8 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
 
     public func captures(frameIndex: Int) -> [VariableInfo] {
         let vmCallStack = vm.callStack
+        // Synthetic main frame has no captures
+        if vmCallStack.isEmpty { return [] }
         guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return [] }
 
         let frame = vmCallStack[frameIndex]
@@ -223,9 +262,7 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
     }
 
     public func evaluate(expression: String, inFrame frameIndex: Int) -> Result<Value, InterpreterError> {
-        // Wrap the expression so the compiler produces a program that pushes one value.
-        let wrappedSource = expression
-        let compileResult = compiler.compile(source: wrappedSource, fileName: "<eval>")
+        let compileResult = compiler.compile(source: expression, fileName: "<eval>")
 
         switch compileResult {
         case .failure(let diagnostics):
@@ -234,19 +271,31 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
                 message: diagnostics.description
             ))
         case .success(let program):
-            // Run the expression in an isolated VM that shares the same environment.
             let evalVM = VM()
-            // Copy current globals into the eval VM.
+
+            // Copy globals
             for (name, value) in vm.environment.allGlobals() {
                 evalVM.environment.setGlobal(name, value: value)
             }
+
+            // Inject in-scope locals as globals so the compiled expression can reference them
+            let localVars = inScopeLocals(frameIndex: frameIndex)
+            for local in localVars {
+                evalVM.environment.setGlobal(local.name, value: local.value)
+            }
+
+            // Inject captures as globals
+            let captureVars = inScopeCaptures(frameIndex: frameIndex)
+            for capture in captureVars {
+                evalVM.environment.setGlobal(capture.name, value: capture.cell.value)
+            }
+
             evalVM.load(program)
             evalVM.run()
 
             switch evalVM.state {
             case .halted:
-                let snapshot = evalVM.stackSnapshot
-                if let last = snapshot.last {
+                if let last = evalVM.stackSnapshot.last {
                     return .success(last)
                 }
                 return .success(.void)
@@ -264,17 +313,27 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
         guard isPaused else { return .failure(.notPaused) }
 
         let vmCallStack = vm.callStack
-        guard frameIndex >= 0 && frameIndex < vmCallStack.count else {
-            return .failure(.frameIndexOutOfRange(frameIndex))
+        let basePointer: Int
+        let currentOffset: Int
+
+        if vmCallStack.isEmpty {
+            guard frameIndex == 0 else { return .failure(.frameIndexOutOfRange(frameIndex)) }
+            basePointer = 0
+            currentOffset = vm.currentIP
+        } else {
+            guard frameIndex >= 0 && frameIndex < vmCallStack.count else {
+                return .failure(.frameIndexOutOfRange(frameIndex))
+            }
+            let frame = vmCallStack[frameIndex]
+            basePointer = frame.basePointer
+            currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
         }
 
-        let frame = vmCallStack[frameIndex]
         guard let program = loadedProgram else { return .failure(.variableNotFound(name)) }
-        let currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
 
         // Search variable table for the named variable in scope.
         for record in program.variableTable where record.name == name && record.isInScope(at: currentOffset) {
-            let slotIndex = frame.basePointer + Int(record.slotIndex)
+            let slotIndex = basePointer + Int(record.slotIndex)
             guard slotIndex >= 0 && slotIndex < vm.stack.count else { continue }
 
             let oldValue = vm.stack[slotIndex]
@@ -334,9 +393,26 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
             ))
         case .success(let program):
             let execVM = VM()
+
+            // Copy globals
             for (name, value) in vm.environment.allGlobals() {
                 execVM.environment.setGlobal(name, value: value)
             }
+
+            // Inject in-scope locals as globals
+            let localVars = inScopeLocals(frameIndex: frameIndex)
+            let localNameSet = Set(localVars.map(\.name))
+            for local in localVars {
+                execVM.environment.setGlobal(local.name, value: local.value)
+            }
+
+            // Inject captures as globals
+            let captureVars = inScopeCaptures(frameIndex: frameIndex)
+            let captureNameSet = Set(captureVars.map(\.name))
+            for capture in captureVars {
+                execVM.environment.setGlobal(capture.name, value: capture.cell.value)
+            }
+
             execVM.load(program)
             execVM.run()
 
@@ -344,9 +420,22 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
             case .error(let error):
                 return .failure(error)
             default:
-                // Copy any modified globals back.
+                // Write back modified values
                 for (name, value) in execVM.environment.allGlobals() {
-                    vm.environment.setGlobal(name, value: value)
+                    if localNameSet.contains(name) {
+                        // Write back to the original VM's stack slot
+                        if let local = localVars.first(where: { $0.name == name }) {
+                            vm.setStackValue(value, at: local.stackIndex)
+                        }
+                    } else if captureNameSet.contains(name) {
+                        // Write back to the capture cell
+                        if let capture = captureVars.first(where: { $0.name == name }) {
+                            capture.cell.value = value
+                        }
+                    } else {
+                        // Genuine global — write back normally
+                        vm.environment.setGlobal(name, value: value)
+                    }
                 }
                 return .success(())
             }
@@ -362,6 +451,45 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
     }
 
     // MARK: - Private Helpers
+
+    /// Collect all in-scope local variable names and their stack values for a given frame.
+    private func inScopeLocals(frameIndex: Int) -> [(name: String, stackIndex: Int, value: Value)] {
+        guard let program = loadedProgram else { return [] }
+        let vmCallStack = vm.callStack
+
+        let basePointer: Int
+        let currentOffset: Int
+
+        if vmCallStack.isEmpty {
+            guard frameIndex == 0 else { return [] }
+            basePointer = 0
+            currentOffset = vm.currentIP
+        } else {
+            guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return [] }
+            let frame = vmCallStack[frameIndex]
+            basePointer = frame.basePointer
+            currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
+        }
+
+        var result: [(name: String, stackIndex: Int, value: Value)] = []
+        for record in program.variableTable where record.isInScope(at: currentOffset) {
+            let slotIndex = basePointer + Int(record.slotIndex)
+            guard slotIndex >= 0 && slotIndex < vm.stack.count else { continue }
+            result.append((name: record.name, stackIndex: slotIndex, value: vm.stack[slotIndex]))
+        }
+        return result
+    }
+
+    /// Collect capture cells for a given frame.
+    private func inScopeCaptures(frameIndex: Int) -> [(name: String, cell: CaptureCell)] {
+        let vmCallStack = vm.callStack
+        guard !vmCallStack.isEmpty,
+              frameIndex >= 0 && frameIndex < vmCallStack.count,
+              let caps = vmCallStack[frameIndex].captures else { return [] }
+        return caps.enumerated().map { index, cell in
+            (name: "capture_\(index)", cell: cell)
+        }
+    }
 
     private func logEvent(_ event: DebugEvent) {
         _eventLog.append(event)
@@ -466,5 +594,9 @@ extension Debugger: VMDelegate {
     public func vm(_ vm: VM, didProduceOutput text: String) {
         logEvent(.printOutput(text))
         delegate?.debuggerDidProduceOutput(text)
+    }
+
+    public func vmDidHalt(_ vm: VM, result: Value?) {
+        delegate?.debuggerDidComplete(result: result)
     }
 }

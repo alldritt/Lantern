@@ -45,6 +45,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
     var currentFileName: String = "<input>"
     var sourceText: String = ""
 
+    /// Names registered externally (e.g. bridge types) that should be treated as globals,
+    /// not as implicit self.property inside type method bodies.
+    public var externalGlobals: Set<String> = []
+
     public init() {}
 
     // MARK: - Public API

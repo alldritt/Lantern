@@ -106,6 +106,21 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         registerAdditionalViews(on: registry, vm: vm)
     }
 
+    // MARK: - Font Type Constants
+
+    // Register Font as an enum-like type so .font(.title) works
+    let fontCaseNames = [
+        "largeTitle", "title", "title2", "title3",
+        "headline", "subheadline", "body",
+        "callout", "footnote", "caption", "caption2",
+    ]
+    for name in fontCaseNames {
+        let caseName = name
+        registry.registerStaticProperty(typeName: "Font", name: caseName, getter: {
+            .enumCase(EnumCaseRef(typeName: "Font", caseName: caseName))
+        }, setter: nil)
+    }
+
     // MARK: - Modifier Methods
 
     let modifierNames = [
@@ -414,8 +429,13 @@ private func registerButton(on registry: BridgeRegistry, vm: VM) {
             }
         }
 
+        // Capture the SwiftUI context so @State reads/writes work in the action
+        let capturedContext = vm.swiftUIContext
         let action: () -> Void = {
             if let actionClosure {
+                let previousContext = vm.swiftUIContext
+                vm.swiftUIContext = capturedContext
+                defer { vm.swiftUIContext = previousContext }
                 _ = try? vm.invokeValue(actionClosure, args: [])
             }
         }

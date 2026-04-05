@@ -1,6 +1,7 @@
 import LanternVM
 import SwiftSyntax
 import SwiftParser
+import SwiftParserDiagnostics
 
 /// The result of parsing source code.
 public struct ParseResult {
@@ -28,10 +29,24 @@ public struct LanternParser: Sendable {
 
         var compilerDiagnostics: [CompilerDiagnostic] = []
 
-        // Check for parse errors by walking the tree for unexpected/missing tokens
-        let errorCollector = ParseErrorCollector(fileName: fileName, tree: syntaxTree)
-        errorCollector.walk(syntaxTree)
-        compilerDiagnostics.append(contentsOf: errorCollector.diagnostics)
+        // Use SwiftSyntax's built-in diagnostic generator for comprehensive error detection
+        // (missing tokens, unexpected nodes, misplaced syntax, etc.)
+        let converter = SourceLocationConverter(fileName: fileName, tree: syntaxTree)
+        let parseDiagnostics = ParseDiagnosticsGenerator.diagnostics(for: syntaxTree)
+        for diag in parseDiagnostics {
+            let loc = diag.location(converter: converter)
+            let vmLoc = LanternVM.SourceLocation(
+                fileIndex: 0,
+                line: UInt32(loc.line),
+                column: UInt16(loc.column)
+            )
+            let severity: DiagnosticSeverity = diag.diagMessage.severity == .error ? .error : .warning
+            compilerDiagnostics.append(CompilerDiagnostic(
+                message: diag.message,
+                location: vmLoc,
+                severity: severity
+            ))
+        }
 
         // Translate to Lantern AST
         let translator = SyntaxTranslator(fileName: fileName, source: source)
@@ -45,33 +60,5 @@ public struct LanternParser: Sendable {
             diagnostics: compilerDiagnostics,
             syntaxTree: syntaxTree
         )
-    }
-}
-
-/// Walks the syntax tree to find unexpected or missing tokens that indicate parse errors.
-private final class ParseErrorCollector: SyntaxVisitor {
-    let converter: SourceLocationConverter
-    var diagnostics: [CompilerDiagnostic] = []
-
-    init(fileName: String, tree: SourceFileSyntax) {
-        self.converter = SourceLocationConverter(fileName: fileName, tree: tree)
-        super.init(viewMode: .sourceAccurate)
-    }
-
-    override func visit(_ token: TokenSyntax) -> SyntaxVisitorContinueKind {
-        if token.presence == .missing {
-            let loc = token.startLocation(converter: converter)
-            let vmLoc = SourceLocation(
-                fileIndex: 0,
-                line: UInt32(loc.line),
-                column: UInt16(loc.column)
-            )
-            diagnostics.append(CompilerDiagnostic(
-                message: "Expected '\(token.tokenKind)'",
-                location: vmLoc,
-                severity: .error
-            ))
-        }
-        return .visitChildren
     }
 }

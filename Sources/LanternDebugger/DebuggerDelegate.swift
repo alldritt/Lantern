@@ -7,6 +7,7 @@ public protocol DebuggerDelegate: AnyObject {
     func debuggerDidEncounterError(_ error: InterpreterError)
     func debuggerDidProduceOutput(_ text: String)
     func debuggerDidLogEvent(_ event: DebugEvent)
+    func debuggerDidComplete(result: Value?)
 }
 
 // Default empty implementations so all methods are optional for adopters.
@@ -16,4 +17,5 @@ extension DebuggerDelegate {
     public func debuggerDidEncounterError(_ error: InterpreterError) {}
     public func debuggerDidProduceOutput(_ text: String) {}
     public func debuggerDidLogEvent(_ event: DebugEvent) {}
+    public func debuggerDidComplete(result: Value?) {}
 }

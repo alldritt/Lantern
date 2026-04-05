@@ -3,6 +3,7 @@ import LanternCompiler
 import LanternDebugger
 import LanternBridge
 #if canImport(SwiftUI)
+import SwiftUI
 import LanternSwiftUI
 #endif
 
@@ -46,6 +47,8 @@ public final class Interpreter {
         #endif
         #endif
         registerBridgeTypesAsGlobals()
+        // Tell the compiler about bridge type names so they aren't treated as self.property
+        compiler.externalGlobals = Set(bridge.registeredTypes)
         // Wire bridge dispatch into VM for runtime method/property lookup
         vm.bridgeMethodLookup = { [weak bridge] typeName, selector in
             bridge?.lookupMethod(typeName: typeName, selector: selector)
@@ -105,6 +108,16 @@ public final class Interpreter {
                         return try method(receiver, methodArgs)
                     }
                     vm.environment.setGlobal(qualifiedName, value: .nativeFunction(fn))
+                }
+            }
+
+            // Register static properties as "TypeName.propertyName" globals (e.g. Font.title)
+            for propName in bridge.registeredStaticProperties(forType: typeName) {
+                if let prop = bridge.lookupStaticProperty(typeName: typeName, name: propName) {
+                    let qualifiedName = "\(typeName).\(propName)"
+                    if let value = try? prop.getter() {
+                        vm.environment.setGlobal(qualifiedName, value: value)
+                    }
                 }
             }
         }
@@ -307,9 +320,30 @@ public final class Interpreter {
         switch vm.state {
         case .halted:
             let result = vm.stackSnapshot.last ?? .void
-            return .success(result)
+            return .success(wrapViewInstanceIfNeeded(result))
         case .error(let err):
             return .failure(err)
+        default:
+            return .success(.void)
+        }
+    }
+
+    /// Execute a program, pausing at the first executable statement.
+    @discardableResult
+    public func executePaused(program: CompiledProgram) -> Result<Value, InterpreterError> {
+        _debugger.load(program)
+        registerBuiltins()
+        registerEnumCases(from: program)
+        if let limit = maxExecutionSteps { vm.executionLimit = limit }
+        _debugger.startPaused()
+
+        switch vm.state {
+        case .halted:
+            return .success(wrapViewInstanceIfNeeded(vm.stackSnapshot.last ?? .void))
+        case .error(let err):
+            return .failure(err)
+        case .paused:
+            return .success(.void) // Paused at first statement — expected
         default:
             return .success(.void)
         }
@@ -371,6 +405,22 @@ public final class Interpreter {
     }
 
     // MARK: - SwiftUI Support
+
+    /// If the value is an instance of a View-conforming type, wrap it in a ViewBox
+    /// so the preview system can render it. Otherwise return the value unchanged.
+    private func wrapViewInstanceIfNeeded(_ value: Value) -> Value {
+        #if canImport(SwiftUI)
+        guard case .instance(let ref) = value else { return value }
+        // Check if this type conforms to View
+        guard let typeInfo = vm.currentProgram?.typeTable.first(where: { $0.name == ref.typeName }),
+              typeInfo.conformances.contains("View") else { return value }
+        // Wrap in a ViewStub → ViewBox so PreviewCanvasView renders it live
+        let stub = makeView(from: ref)
+        return .hostObject(HostObjectRef(object: ViewBox(AnyView(stub)), typeName: ref.typeName))
+        #else
+        return value
+        #endif
+    }
 
     /// Create an instance of a view type defined in the last compiled program.
     public func createInstance(typeName: String, arguments: [Value] = []) -> InstanceRef? {
