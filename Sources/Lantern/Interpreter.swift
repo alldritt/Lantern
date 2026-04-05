@@ -447,7 +447,8 @@ public final class Interpreter {
 
     /// If the value is an instance of a View-conforming type, wrap it in a ViewBox
     /// so the preview system can render it. Otherwise return the value unchanged.
-    private func wrapViewInstanceIfNeeded(_ value: Value) -> Value {
+    /// Public so LanternKit can wrap values from the debugger (e.g. lastExpressionResult).
+    public func wrapViewInstanceIfNeeded(_ value: Value) -> Value {
         #if canImport(SwiftUI)
         guard case .instance(let ref) = value else { return value }
         // Check if this type conforms to View
