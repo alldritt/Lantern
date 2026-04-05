@@ -53,6 +53,13 @@ public final class BridgeRegistry: @unchecked Sendable {
         registerUserDefaultsBridge(on: registry)
         registerJSONBridge(on: registry)
         registerTimerBridge(on: registry)
+        registerDateFormatterBridge(on: registry)
+        registerNumberFormatterBridge(on: registry)
+        registerCalendarBridge(on: registry)
+        registerDataBridge(on: registry)
+        registerStringExtBridge(on: registry)
+        registerNotificationBridge(on: registry)
+        registerBundleBridge(on: registry)
         return registry
     }
 
