@@ -224,6 +224,10 @@ extension BytecodeCompiler {
                     && symbolTable.lookup(ident.name) == nil
                     && !isKnownGlobal(ident.name) {
             // Inside a type method body — unresolved identifiers are implicit self.property
+            // Validate that the property exists on the current type
+            if !currentTypePropertyNames.isEmpty && !currentTypePropertyNames.contains(ident.name) {
+                diagnosticEngine.error("Value of type '\(compilingMethodOfType!)' has no property '\(ident.name)'", at: ident.location)
+            }
             if isCompilingViewType && statePropertyNames.contains(ident.name) {
                 // @State: read from state store
                 let nameIndex = chunk.constantPool.addString(ident.name)
@@ -483,6 +487,11 @@ extension BytecodeCompiler {
                 && symbolTable.lookup(ident.name)?.kind == nil
 
             if isImplicitSelfProperty {
+                // Validate that the property exists on the current type
+                if !currentTypePropertyNames.isEmpty && !currentTypePropertyNames.contains(ident.name) {
+                    diagnosticEngine.error("Value of type '\(compilingMethodOfType!)' has no property '\(ident.name)'", at: assign.location)
+                }
+
                 // For @State properties in View types, use stateSet
                 if isCompilingViewType && statePropertyNames.contains(ident.name) {
                     compileExpression(assign.value)

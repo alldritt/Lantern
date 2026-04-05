@@ -109,3 +109,31 @@ let arr = [1, 2, 3)
 // EXPECT: ERROR
 let x = (1 + 2]
 // END
+
+// === Undefined Property ===
+
+// TEST: assign_undefined_property_in_struct
+// EXPECT: ERROR
+struct Foo {
+    var x = 0
+    func bad() { y = 1 }
+}
+// END
+
+// TEST: read_undefined_property_in_struct
+// EXPECT: ERROR
+struct Bar {
+    var x = 0
+    func bad() -> Int { return y }
+}
+// END
+
+// TEST: typo_state_property_in_view
+// EXPECT: ERROR
+struct MyView: View {
+    @State var count = 0
+    var body: some View {
+        Text("hi").onAppear { counter = 100 }
+    }
+}
+// END

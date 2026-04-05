@@ -126,12 +126,14 @@ extension BytecodeCompiler {
         let savedObservedProps = observedObjectPropertyNames
         let savedEnvProps = environmentPropertyNames
         let savedAppStorage = appStorageProperties
+        let savedTypeProps = currentTypePropertyNames
         isCompilingViewType = decl.conformances.contains("View")
         statePropertyNames = []
         bindingPropertyNames = []
         observedObjectPropertyNames = []
         environmentPropertyNames = []
         appStorageProperties = [:]
+        currentTypePropertyNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -164,6 +166,14 @@ extension BytecodeCompiler {
                 }
                 if prop.attributes.contains("Environment") { environmentPropertyNames.insert(prop.name) }
                 if prop.attributes.contains("Published") { publishedPropertyNames.insert(prop.name) }
+            }
+        }
+
+        // Build the set of all known property names for this type
+        currentTypePropertyNames = Set(properties.map(\.name))
+        for member in decl.members {
+            if let computed = member as? ComputedPropertyNode {
+                currentTypePropertyNames.insert(computed.name)
             }
         }
 
@@ -220,6 +230,7 @@ extension BytecodeCompiler {
         }
 
         // Restore View type tracking state
+        currentTypePropertyNames = savedTypeProps
         isCompilingViewType = savedIsViewType
         statePropertyNames = savedStateProps
         bindingPropertyNames = savedBindingProps
@@ -234,7 +245,9 @@ extension BytecodeCompiler {
 
         // Track @Published properties for publishSet opcode emission
         let savedPublishedProps = publishedPropertyNames
+        let savedTypeProps = currentTypePropertyNames
         publishedPropertyNames = []
+        currentTypePropertyNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -256,6 +269,14 @@ extension BytecodeCompiler {
                 if prop.attributes.contains("Published") {
                     publishedPropertyNames.insert(prop.name)
                 }
+            }
+        }
+
+        // Build the set of all known property names for this type
+        currentTypePropertyNames = Set(properties.map(\.name))
+        for member in decl.members {
+            if let computed = member as? ComputedPropertyNode {
+                currentTypePropertyNames.insert(computed.name)
             }
         }
 
@@ -304,6 +325,7 @@ extension BytecodeCompiler {
         }
 
         publishedPropertyNames = savedPublishedProps
+        currentTypePropertyNames = savedTypeProps
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter
