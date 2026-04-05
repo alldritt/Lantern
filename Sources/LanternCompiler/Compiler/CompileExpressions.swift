@@ -510,9 +510,14 @@ extension BytecodeCompiler {
                     chunk.writeU16(UInt16(captureIdx))
                 } else {
                     // Global variable
-                    // Check global immutability
-                    if case .global(let isMutable) = symbolTable.lookup(ident.name)?.kind, !isMutable {
-                        diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
+                    // Check global immutability — allow first assignment to uninitialized let
+                    if case .global(let isMutable, let isInitialized) = symbolTable.lookup(ident.name)?.kind {
+                        if !isMutable && isInitialized {
+                            diagnosticEngine.error("Cannot assign to immutable variable '\(ident.name)'", at: assign.location)
+                        }
+                        if !isMutable && !isInitialized {
+                            symbolTable.markInitialized(ident.name)
+                        }
                     }
                     chunk.write(.dup)
                     let nameIndex = chunk.constantPool.addString(ident.name)

@@ -164,7 +164,8 @@ public final class BytecodeCompiler: @unchecked Sendable {
                     symbolTable.register(enumCase.name, kind: .enumCase(typeName: enumDecl.name), location: enumDecl.location)
                 }
             } else if let varDecl = stmt as? VariableDeclarationNode {
-                symbolTable.register(varDecl.name, kind: .global(isMutable: varDecl.isMutable), location: varDecl.location)
+                let hasInit = varDecl.initializer != nil
+                symbolTable.register(varDecl.name, kind: .global(isMutable: varDecl.isMutable, isInitialized: hasInit), location: varDecl.location)
             }
         }
         // Register built-in enum cases for Result type

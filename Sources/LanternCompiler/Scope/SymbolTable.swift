@@ -4,7 +4,7 @@ import LanternVM
 public enum SymbolKind: Sendable {
     case function(paramCount: Int, isAsync: Bool, isThrowing: Bool)
     case type(TypeKind)
-    case global(isMutable: Bool)
+    case global(isMutable: Bool, isInitialized: Bool = true)
     case enumCase(typeName: String)
 }
 
@@ -71,6 +71,42 @@ public final class SymbolTable: @unchecked Sendable {
         symbols.values.filter {
             if case .global = $0.kind { return true }
             return false
+        }
+    }
+
+    /// Mark a global variable as initialized (for deferred let).
+    public func markInitialized(_ name: String) {
+        guard var record = symbols[name], case .global(let isMutable, _) = record.kind else { return }
+        symbols[name] = SymbolRecord(name: name, kind: .global(isMutable: isMutable, isInitialized: true), location: record.location)
+    }
+
+    /// Snapshot of global initialization states (for branch analysis).
+    public func initializedSnapshot() -> [String: Bool] {
+        var snap: [String: Bool] = [:]
+        for (name, record) in symbols {
+            if case .global(_, let isInit) = record.kind { snap[name] = isInit }
+        }
+        return snap
+    }
+
+    /// Restore initialization states from snapshot.
+    public func restoreInitializedSnapshot(_ snap: [String: Bool]) {
+        for (name, isInit) in snap {
+            if var record = symbols[name], case .global(let isMutable, _) = record.kind {
+                symbols[name] = SymbolRecord(name: name, kind: .global(isMutable: isMutable, isInitialized: isInit), location: record.location)
+            }
+        }
+    }
+
+    /// Merge two branch snapshots: initialized only if BOTH branches initialized.
+    public func mergeInitializedSnapshots(_ thenSnap: [String: Bool], _ elseSnap: [String: Bool]) {
+        let allKeys = Set(thenSnap.keys).union(elseSnap.keys)
+        for name in allKeys {
+            let thenInit = thenSnap[name] ?? false
+            let elseInit = elseSnap[name] ?? false
+            if var record = symbols[name], case .global(let isMutable, _) = record.kind {
+                symbols[name] = SymbolRecord(name: name, kind: .global(isMutable: isMutable, isInitialized: thenInit && elseInit), location: record.location)
+            }
         }
     }
 

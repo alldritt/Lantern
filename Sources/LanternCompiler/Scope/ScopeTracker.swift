@@ -101,6 +101,30 @@ public final class ScopeTracker: @unchecked Sendable {
         locals = state.0; nextSlot = state.1; scopeDepth = state.2
     }
 
+    /// Snapshot of which locals are initialized (for branch analysis).
+    public func saveInitializedState() -> [String: Bool] {
+        var state: [String: Bool] = [:]
+        for local in locals { state[local.name] = local.isInitialized }
+        return state
+    }
+
+    /// Restore initialized state from a snapshot.
+    public func restoreInitializedState(_ state: [String: Bool]) {
+        for i in locals.indices {
+            if let saved = state[locals[i].name] { locals[i].isInitialized = saved }
+        }
+    }
+
+    /// Merge two branch states: a local is initialized only if BOTH branches initialized it.
+    public func mergeInitializedState(_ thenState: [String: Bool], _ elseState: [String: Bool]) {
+        for i in locals.indices {
+            let name = locals[i].name
+            let thenInit = thenState[name] ?? false
+            let elseInit = elseState[name] ?? false
+            locals[i].isInitialized = thenInit && elseInit
+        }
+    }
+
     /// Reserve a specific number of initial slots (e.g., for function parameters).
     public func reserveSlots(_ count: UInt16) {
         if nextSlot < count {

@@ -195,7 +195,8 @@ extension BytecodeCompiler {
 
         if scopeTracker.currentDepth == 0 {
             // Global variable — store in environment, don't allocate a stack slot
-            symbolTable.register(decl.name, kind: .global(isMutable: decl.isMutable), location: decl.location)
+            let hasInit = decl.initializer != nil
+            symbolTable.register(decl.name, kind: .global(isMutable: decl.isMutable, isInitialized: hasInit), location: decl.location)
             let nameIndex = chunk.constantPool.addString(decl.name)
             Instruction.storeGlobal(nameIndex, into: &chunk)
         } else {
@@ -253,7 +254,18 @@ extension BytecodeCompiler {
             compileExpression(condition)
             let jumpElse = Instruction.jumpIfFalse(into: &chunk)
 
+            // Save initialized state before branches — for deferred let analysis
+            let savedLocalState = scopeTracker.saveInitializedState()
+            let savedGlobalInits = symbolTable.initializedSnapshot()
+
             compileBlock(stmt.thenBlock)
+
+            let thenLocalState = scopeTracker.saveInitializedState()
+            let thenGlobalInits = symbolTable.initializedSnapshot()
+
+            // Restore to pre-branch state for else compilation
+            scopeTracker.restoreInitializedState(savedLocalState)
+            symbolTable.restoreInitializedSnapshot(savedGlobalInits)
 
             let jumpEnd = Instruction.jump(into: &chunk)
             Instruction.patchJump(at: jumpElse, in: &chunk)
@@ -261,6 +273,14 @@ extension BytecodeCompiler {
             if let elseBlock = stmt.elseBlock {
                 compileStatement(elseBlock)
             }
+
+            let elseLocalState = scopeTracker.saveInitializedState()
+            let elseGlobalInits = symbolTable.initializedSnapshot()
+
+            // A deferred let is initialized after if/else only if BOTH branches initialized it
+            scopeTracker.mergeInitializedState(thenLocalState, elseLocalState)
+            symbolTable.mergeInitializedSnapshots(thenGlobalInits, elseGlobalInits)
+
             Instruction.patchJump(at: jumpEnd, in: &chunk)
         }
     }
