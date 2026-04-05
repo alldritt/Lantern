@@ -123,9 +123,13 @@ extension BytecodeCompiler {
         let savedIsViewType = isCompilingViewType
         let savedStateProps = statePropertyNames
         let savedBindingProps = bindingPropertyNames
+        let savedObservedProps = observedObjectPropertyNames
+        let savedEnvProps = environmentPropertyNames
         isCompilingViewType = decl.conformances.contains("View")
         statePropertyNames = []
         bindingPropertyNames = []
+        observedObjectPropertyNames = []
+        environmentPropertyNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -135,24 +139,25 @@ extension BytecodeCompiler {
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
-                if prop.attributes.contains("State") {
-                    statePropertyNames.insert(prop.name)
+                if prop.attributes.contains("State") { statePropertyNames.insert(prop.name) }
+                if prop.attributes.contains("Binding") { bindingPropertyNames.insert(prop.name) }
+                if prop.attributes.contains("ObservedObject") || prop.attributes.contains("StateObject") {
+                    observedObjectPropertyNames.insert(prop.name)
                 }
-                if prop.attributes.contains("Binding") {
-                    bindingPropertyNames.insert(prop.name)
-                }
+                if prop.attributes.contains("Environment") { environmentPropertyNames.insert(prop.name) }
             } else if let prop = member as? PropertyNode, !prop.isStatic {
                 properties.append(PropertyInfo(
                     name: prop.name,
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
-                if prop.attributes.contains("State") {
-                    statePropertyNames.insert(prop.name)
+                if prop.attributes.contains("State") { statePropertyNames.insert(prop.name) }
+                if prop.attributes.contains("Binding") { bindingPropertyNames.insert(prop.name) }
+                if prop.attributes.contains("ObservedObject") || prop.attributes.contains("StateObject") {
+                    observedObjectPropertyNames.insert(prop.name)
                 }
-                if prop.attributes.contains("Binding") {
-                    bindingPropertyNames.insert(prop.name)
-                }
+                if prop.attributes.contains("Environment") { environmentPropertyNames.insert(prop.name) }
+                if prop.attributes.contains("Published") { publishedPropertyNames.insert(prop.name) }
             }
         }
 
@@ -207,11 +212,17 @@ extension BytecodeCompiler {
         isCompilingViewType = savedIsViewType
         statePropertyNames = savedStateProps
         bindingPropertyNames = savedBindingProps
+        observedObjectPropertyNames = savedObservedProps
+        environmentPropertyNames = savedEnvProps
     }
 
     func compileClassDeclaration(_ decl: ClassDeclarationNode) {
         emitLocation(decl.location)
         let typeIndex = chunk.constantPool.addTypeName(decl.name)
+
+        // Track @Published properties for publishSet opcode emission
+        let savedPublishedProps = publishedPropertyNames
+        publishedPropertyNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -221,12 +232,18 @@ extension BytecodeCompiler {
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
+                if prop.attributes.contains("Published") {
+                    publishedPropertyNames.insert(prop.name)
+                }
             } else if let prop = member as? PropertyNode {
                 properties.append(PropertyInfo(
                     name: prop.name,
                     typeAnnotation: prop.typeAnnotation,
                     isMutable: prop.isMutable
                 ))
+                if prop.attributes.contains("Published") {
+                    publishedPropertyNames.insert(prop.name)
+                }
             }
         }
 
@@ -273,6 +290,8 @@ extension BytecodeCompiler {
                 Instruction.storeGlobal(nameIndex, into: &chunk)
             }
         }
+
+        publishedPropertyNames = savedPublishedProps
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter

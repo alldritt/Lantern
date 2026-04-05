@@ -221,6 +221,12 @@ extension BytecodeCompiler {
                 Instruction.getProperty(nameIndex, into: &chunk)
                 // The property value is a BindingRef — the VM's getProperty
                 // will read through it transparently
+            } else if isCompilingViewType && environmentPropertyNames.contains(ident.name) {
+                // @Environment: read from swiftUIContext.environmentValues
+                // Emit stateGet with a "__env_" prefix to distinguish from @State
+                let nameIndex = chunk.constantPool.addString("__env_\(ident.name)")
+                chunk.write(.stateGet)
+                chunk.writeU16(nameIndex)
             } else {
                 if let selfLocal = scopeTracker.resolve("self") {
                     Instruction.loadLocal(selfLocal.slot, into: &chunk)
@@ -463,6 +469,18 @@ extension BytecodeCompiler {
                     compileExpression(assign.value)
                     let nameIndex = chunk.constantPool.addString(ident.name)
                     chunk.write(.stateSet)
+                    chunk.writeU16(nameIndex)
+                    chunk.write(.constNil)
+                } else if publishedPropertyNames.contains(ident.name) {
+                    // @Published property: use publishSet to trigger objectWillChange
+                    if let selfLocal = scopeTracker.resolve("self") {
+                        Instruction.loadLocal(selfLocal.slot, into: &chunk)
+                    } else {
+                        Instruction.loadLocal(0, into: &chunk)
+                    }
+                    compileExpression(assign.value)
+                    let nameIndex = chunk.constantPool.addPropertyName(ident.name)
+                    chunk.write(.publishSet)
                     chunk.writeU16(nameIndex)
                     chunk.write(.constNil)
                 } else {

@@ -47,6 +47,10 @@ public final class VM: @unchecked Sendable {
     /// Bridge property lookup. Set by Interpreter.
     public var bridgePropertyLookup: ((String, String) -> ((Value) throws -> Value)?)?
 
+    /// Called when a @Published property is set via publishSet opcode.
+    /// The bridge layer uses this to fire objectWillChange on ObservableObject wrappers.
+    public var publishedPropertyHandler: ((InstanceRef, String) -> Void)?
+
     /// Built-in method registry for Array, String, Dictionary, Range, Optional.
     private let builtinMethods = BuiltinMethodRegistry()
 
@@ -507,7 +511,13 @@ public final class VM: @unchecked Sendable {
         case .stateGet:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
             if let ctx = swiftUIContext {
-                try stack.push(ctx.stateStore.get(name))
+                // Check for @Environment values (prefixed with __env_)
+                if name.hasPrefix("__env_") {
+                    let envKey = String(name.dropFirst(6))
+                    try stack.push(ctx.environmentValues[envKey] ?? .nil_)
+                } else {
+                    try stack.push(ctx.stateStore.get(name))
+                }
             } else {
                 try stack.push(.nil_)
             }
@@ -533,8 +543,9 @@ public final class VM: @unchecked Sendable {
             let instance = stack.pop()
             if case .instance(let ref) = instance {
                 ref.setProperty(name, value)
+                // Notify observers that a @Published property changed
+                publishedPropertyHandler?(ref, name)
             }
-            // Notification is handled by the bridge layer
             ip += 3
         case .viewCollect:
             let view = stack.pop()

@@ -20,6 +20,12 @@ public final class BytecodeCompiler: @unchecked Sendable {
     var statePropertyNames: Set<String> = []
     /// Set of @Binding property names for the current View type
     var bindingPropertyNames: Set<String> = []
+    /// Set of @ObservedObject property names for the current View type
+    var observedObjectPropertyNames: Set<String> = []
+    /// Set of @Environment property names for the current View type
+    var environmentPropertyNames: Set<String> = []
+    /// Set of @Published property names for the current class being compiled
+    var publishedPropertyNames: Set<String> = []
     /// Whether the current type conforms to View (enables @State opcode emission)
     var isCompilingViewType: Bool = false
     /// When true, suppress the pop after expression statements (for implicit closure returns)
