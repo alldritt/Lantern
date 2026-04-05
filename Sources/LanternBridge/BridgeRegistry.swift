@@ -232,6 +232,12 @@ public final class BridgeRegistry: @unchecked Sendable {
         return types[typeName]?.properties[name]
     }
 
+    public func lookupStaticProperty(typeName: String, name: String) -> (getter: () throws -> Value, setter: ((Value) throws -> Void)?)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return types[typeName]?.staticProperties[name]
+    }
+
     public func lookupFunction(_ name: String) -> (([Value]) throws -> Value)? {
         lock.lock()
         defer { lock.unlock() }
