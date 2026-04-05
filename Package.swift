@@ -16,6 +16,7 @@ let package = Package(
         .library(name: "LanternBridge", targets: ["LanternBridge"]),
         .library(name: "LanternSwiftUI", targets: ["LanternSwiftUI"]),
         .executable(name: "lantern-repl", targets: ["lantern-repl"]),
+        .executable(name: "lantern-bridge-gen", targets: ["lantern-bridge-gen"]),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "600.0.1"),
@@ -77,6 +78,18 @@ let package = Package(
             name: "lantern-repl",
             dependencies: ["Lantern"],
             path: "Sources/lantern-repl"
+        ),
+
+        // MARK: - Bridge Generator
+        .executableTarget(
+            name: "lantern-bridge-gen",
+            dependencies: [
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftParser", package: "swift-syntax"),
+                "LanternVM",
+                "LanternBridge",
+            ],
+            path: "Sources/lantern-bridge-gen"
         ),
 
         // MARK: - Tests

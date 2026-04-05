@@ -1,0 +1,5 @@
+{
+    "Date": ["timeIntervalSince1970", "addingTimeInterval", "timeIntervalSinceNow"],
+    "URL": ["absoluteString", "host", "path", "pathComponents", "lastPathComponent"],
+    "UUID": ["uuidString"]
+}
