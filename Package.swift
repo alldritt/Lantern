@@ -17,6 +17,7 @@ let package = Package(
         .library(name: "LanternSwiftUI", targets: ["LanternSwiftUI"]),
         .executable(name: "lantern-repl", targets: ["lantern-repl"]),
         .executable(name: "lantern-bridge-gen", targets: ["lantern-bridge-gen"]),
+        .executable(name: "lantern-conformance", targets: ["lantern-conformance"]),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "600.0.1"),
@@ -91,6 +92,13 @@ let package = Package(
                 "LanternBridge",
             ],
             path: "Sources/lantern-bridge-gen"
+        ),
+
+        // MARK: - Conformance Oracle
+        .executableTarget(
+            name: "lantern-conformance",
+            dependencies: ["Lantern"],
+            path: "Sources/lantern-conformance"
         ),
 
         // MARK: - Tests

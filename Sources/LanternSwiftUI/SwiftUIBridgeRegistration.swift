@@ -106,19 +106,48 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         registerAdditionalViews(on: registry, vm: vm)
     }
 
-    // MARK: - Font Type Constants
+    // MARK: - SwiftUI Enum-Like Type Constants
+    //
+    // Register static properties so implicit member syntax works:
+    //   .font(.title)  →  Font.title
+    //   .foregroundColor(.red)  →  Color.red
+    //   .multilineTextAlignment(.center)  →  TextAlignment.center
 
-    // Register Font as an enum-like type so .font(.title) works
-    let fontCaseNames = [
-        "largeTitle", "title", "title2", "title3",
-        "headline", "subheadline", "body",
-        "callout", "footnote", "caption", "caption2",
+    let enumTypes: [(String, [String])] = [
+        // Font
+        ("Font", ["largeTitle", "title", "title2", "title3",
+                  "headline", "subheadline", "body",
+                  "callout", "footnote", "caption", "caption2"]),
+        // Color
+        ("Color", ["red", "blue", "green", "yellow", "orange", "purple", "pink",
+                   "white", "black", "gray", "grey", "clear", "primary", "secondary",
+                   "accentColor", "brown", "cyan", "indigo", "mint", "teal"]),
+        // TextAlignment
+        ("TextAlignment", ["leading", "center", "trailing"]),
+        // HorizontalAlignment
+        ("HorizontalAlignment", ["leading", "center", "trailing"]),
+        // VerticalAlignment
+        ("VerticalAlignment", ["top", "center", "bottom", "firstTextBaseline", "lastTextBaseline"]),
+        // Alignment
+        ("Alignment", ["topLeading", "top", "topTrailing",
+                       "leading", "center", "trailing",
+                       "bottomLeading", "bottom", "bottomTrailing"]),
+        // Edge / Edge.Set
+        ("Edge", ["top", "bottom", "leading", "trailing"]),
+        // ContentMode
+        ("ContentMode", ["fit", "fill"]),
+        // Axis
+        ("Axis", ["horizontal", "vertical"]),
     ]
-    for name in fontCaseNames {
-        let caseName = name
-        registry.registerStaticProperty(typeName: "Font", name: caseName, getter: {
-            .enumCase(EnumCaseRef(typeName: "Font", caseName: caseName))
-        }, setter: nil)
+
+    for (typeName, caseNames) in enumTypes {
+        for caseName in caseNames {
+            let tn = typeName
+            let cn = caseName
+            registry.registerStaticProperty(typeName: tn, name: cn, getter: {
+                .enumCase(EnumCaseRef(typeName: tn, caseName: cn))
+            }, setter: nil)
+        }
     }
 
     // MARK: - Modifier Methods

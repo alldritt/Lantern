@@ -66,32 +66,26 @@ public struct ModifierApplicator {
             modified = AnyView(view.lineLimit(limit))
 
         case "multilineTextAlignment":
-            let alignment: TextAlignment = {
-                switch arguments.first?.stringValue {
-                case "center": return .center
-                case "trailing": return .trailing
-                default: return .leading
-                }
-            }()
+            let alignment = arguments.first.map { Self.textAlignmentFromValue($0) } ?? .leading
             modified = AnyView(view.multilineTextAlignment(alignment))
 
         // Appearance
         case "foregroundColor", "foregroundStyle":
-            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+            if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.foregroundStyle(color))
             } else {
                 modified = AnyView(view)
             }
 
         case "background":
-            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+            if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.background(color))
             } else {
                 modified = AnyView(view)
             }
 
         case "overlay":
-            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+            if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.overlay(color))
             } else {
                 modified = AnyView(view)
@@ -114,7 +108,7 @@ public struct ModifierApplicator {
             modified = AnyView(view.shadow(radius: CGFloat(radius)))
 
         case "border":
-            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+            if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 let width = arguments.count > 1 ? arguments[1].doubleValue ?? 1 : 1
                 modified = AnyView(view.border(color, width: CGFloat(width)))
             } else {
@@ -202,14 +196,14 @@ public struct ModifierApplicator {
 
         // Color
         case "tint":
-            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+            if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.tint(color))
             } else {
                 modified = AnyView(view)
             }
 
         case "accentColor":
-            if let colorName = arguments.first?.stringValue, let color = namedColor(colorName) {
+            if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.tint(color)) // accentColor deprecated, use tint
             } else {
                 modified = AnyView(view)
@@ -256,7 +250,36 @@ public struct ModifierApplicator {
         case "clear": return .clear
         case "primary": return .primary
         case "secondary": return .secondary
+        case "brown": return .brown
+        case "cyan": return .cyan
+        case "indigo": return .indigo
+        case "mint": return .mint
+        case "teal": return .teal
+        case "accentcolor": return .accentColor
         default: return nil
+        }
+    }
+
+    /// Extract a Color from a Value — supports both enum cases (.red) and strings ("red").
+    static func colorFromValue(_ value: Value) -> Color? {
+        if case .enumCase(let ref) = value, ref.typeName == "Color" {
+            return namedColor(ref.caseName)
+        }
+        if let name = value.stringValue {
+            return namedColor(name)
+        }
+        return nil
+    }
+
+    /// Extract a TextAlignment from a Value — supports both enum cases (.center) and strings ("center").
+    static func textAlignmentFromValue(_ value: Value) -> TextAlignment {
+        let name: String
+        if case .enumCase(let ref) = value { name = ref.caseName }
+        else { name = value.stringValue ?? "leading" }
+        switch name {
+        case "center": return .center
+        case "trailing": return .trailing
+        default: return .leading
         }
     }
 

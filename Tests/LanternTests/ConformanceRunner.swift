@@ -2,6 +2,9 @@ import Testing
 import Foundation
 @testable import Lantern
 @testable import LanternVM
+#if canImport(SwiftUI)
+@testable import LanternSwiftUI
+#endif
 
 /// Runs conformance fixtures through the Lantern interpreter.
 @Suite("Conformance Runner")
@@ -27,25 +30,43 @@ struct ConformanceRunner {
             var fileErrors: [String] = []
 
             for test in tests {
-                let (captured, error) = runTestWithTimeout(test, timeoutMs: 500)
-                let expectsError = test.expectedOutput.hasPrefix("ERROR")
+                let (captured, error, resultValue) = runTestWithTimeout(test, timeoutMs: 500)
+                let expected = test.expectedOutput
 
-                if expectsError {
+                if expected.hasPrefix("ERROR") {
                     // Negative test: expect a compile-time or runtime error
                     if error != nil {
-                        filePassed += 1 // Got an error as expected
+                        filePassed += 1
                     } else {
                         fileFailed += 1
                         fileErrors.append("  \(test.name): expected error but succeeded with [\(captured.prefix(40))]")
                     }
+                } else if expected == "VIEW" {
+                    // Expect a ViewBox result
+                    if error != nil {
+                        fileFailed += 1
+                        fileErrors.append("  \(test.name): expected VIEW but error: \(error!.prefix(60))")
+                    } else if resultValue?.hostObjectRef != nil {
+                        filePassed += 1
+                    } else {
+                        fileFailed += 1
+                        fileErrors.append("  \(test.name): expected VIEW but got \(resultValue?.description.prefix(40) ?? "nil")")
+                    }
+                } else if expected == "COMPILES" {
+                    if error != nil {
+                        fileFailed += 1
+                        fileErrors.append("  \(test.name): expected COMPILES but error: \(error!.prefix(60))")
+                    } else {
+                        filePassed += 1
+                    }
                 } else if let error {
                     fileFailed += 1
                     fileErrors.append("  \(test.name): \(error.prefix(60))")
-                } else if captured == test.expectedOutput {
+                } else if captured == expected {
                     filePassed += 1
                 } else {
                     fileFailed += 1
-                    fileErrors.append("  \(test.name): expected[\(test.expectedOutput.prefix(40))] got[\(captured.prefix(40))]")
+                    fileErrors.append("  \(test.name): expected[\(expected.prefix(40))] got[\(captured.prefix(40))]")
                 }
             }
 
@@ -62,10 +83,11 @@ struct ConformanceRunner {
     }
 
     /// Run a single test with a timeout to prevent hangs.
-    func runTestWithTimeout(_ test: ConformanceTestCase, timeoutMs: Int) -> (output: String, error: String?) {
+    func runTestWithTimeout(_ test: ConformanceTestCase, timeoutMs: Int) -> (output: String, error: String?, resultValue: Value?) {
         let semaphore = DispatchSemaphore(value: 0)
         var resultOutput = ""
         var resultError: String? = nil
+        nonisolated(unsafe) var resultValue: Value? = nil
 
         DispatchQueue.global().async {
             let interp = Interpreter()
@@ -77,8 +99,9 @@ struct ConformanceRunner {
             let captured = output.printOutput.joined().trimmingCharacters(in: .newlines)
 
             switch result {
-            case .success:
+            case .success(let value):
                 resultOutput = captured
+                resultValue = value
             case .failure(let err):
                 resultError = "\(err.kind) \(err.message)"
             }
@@ -87,8 +110,8 @@ struct ConformanceRunner {
 
         let timeout = DispatchTime.now() + .milliseconds(1000)
         if semaphore.wait(timeout: timeout) == .timedOut {
-            return ("", "TIMEOUT")
+            return ("", "TIMEOUT", nil)
         }
-        return (resultOutput, resultError)
+        return (resultOutput, resultError, resultValue)
     }
 }
