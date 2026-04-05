@@ -129,6 +129,7 @@ public indirect enum Value: Sendable, CustomStringConvertible {
             }
             return "[\(elems.joined(separator: ", "))]"
         case .dictionary(let d):
+            if d.isEmpty { return "[:]" }
             let pairs = d.sorted(by: { $0.key < $1.key }).map { pair -> String in
                 let valStr: String
                 if case .string(let s) = pair.value { valStr = "\"\(s)\"" }

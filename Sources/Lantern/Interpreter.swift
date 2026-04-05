@@ -295,6 +295,33 @@ public final class Interpreter {
             return .enumCase(EnumCaseRef(typeName: "Result", caseName: "failure", associatedValues: args))
         }
         vm.environment.setGlobal("Result.failure", value: .nativeFunction(failureFn))
+
+        // Static methods: Int.random(in:), Double.random(in:), Bool.random()
+        let intRandomFn = NativeFunctionRef(name: "Int.random", arity: 1) { args in
+            guard case .range(let lo, let hi, let inclusive) = args.first else { return .nil_ }
+            let upper = inclusive ? hi : hi - 1
+            guard lo <= upper else { return .nil_ }
+            return .int(Int.random(in: lo...upper))
+        }
+        vm.environment.setGlobal("Int.random", value: .nativeFunction(intRandomFn))
+
+        let doubleRandomFn = NativeFunctionRef(name: "Double.random", arity: 1) { args in
+            guard case .range(let lo, let hi, _) = args.first else { return .nil_ }
+            return .double(Double.random(in: Double(lo)...Double(hi)))
+        }
+        vm.environment.setGlobal("Double.random", value: .nativeFunction(doubleRandomFn))
+
+        let boolRandomFn = NativeFunctionRef(name: "Bool.random", arity: 0) { _ in
+            return .bool(Bool.random())
+        }
+        vm.environment.setGlobal("Bool.random", value: .nativeFunction(boolRandomFn))
+
+        // Numeric type constants
+        vm.environment.setGlobal("Int.min", value: .int(Int.min))
+        vm.environment.setGlobal("Int.max", value: .int(Int.max))
+        vm.environment.setGlobal("Double.pi", value: .double(Double.pi))
+        vm.environment.setGlobal("Double.infinity", value: .double(Double.infinity))
+        vm.environment.setGlobal("Double.nan", value: .double(Double.nan))
     }
 
     /// Compile Swift source into a compiled program.

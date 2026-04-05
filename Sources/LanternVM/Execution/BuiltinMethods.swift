@@ -10,6 +10,9 @@ public final class BuiltinMethodRegistry {
     private var methods: [String: [String: BuiltinMethodImpl]] = [:]
 
     public init() {
+        registerIntMethods()
+        registerDoubleMethods()
+        registerBoolMethods()
         registerArrayMethods()
         registerStringMethods()
         registerDictionaryMethods()
@@ -24,6 +27,77 @@ public final class BuiltinMethodRegistry {
     private func register(_ typeName: String, _ name: String, _ impl: @escaping BuiltinMethodImpl) {
         if methods[typeName] == nil { methods[typeName] = [:] }
         methods[typeName]![name] = impl
+    }
+
+    // MARK: - Int Methods
+
+    private func registerIntMethods() {
+        register("Int", "isMultiple") { _, receiver, args in
+            guard let n = receiver.intValue, let of = args.first?.intValue, of != 0 else { return .bool(false) }
+            return .bool(n.isMultiple(of: of))
+        }
+        register("Int", "signum") { _, receiver, _ in
+            guard let n = receiver.intValue else { return .int(0) }
+            return .int(n.signum())
+        }
+        register("Int", "magnitude") { _, receiver, _ in
+            guard let n = receiver.intValue else { return .int(0) }
+            return .int(Int(n.magnitude))
+        }
+        register("Int", "description") { _, receiver, _ in
+            guard let n = receiver.intValue else { return .string("") }
+            return .string(String(n))
+        }
+    }
+
+    // MARK: - Double Methods
+
+    private func registerDoubleMethods() {
+        register("Double", "isNaN") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .bool(false) }
+            return .bool(d.isNaN)
+        }
+        register("Double", "isInfinite") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .bool(false) }
+            return .bool(d.isInfinite)
+        }
+        register("Double", "isFinite") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .bool(false) }
+            return .bool(d.isFinite)
+        }
+        register("Double", "isZero") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .bool(false) }
+            return .bool(d.isZero)
+        }
+        register("Double", "rounded") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .double(0) }
+            return .double(d.rounded())
+        }
+        register("Double", "squareRoot") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .double(0) }
+            return .double(d.squareRoot())
+        }
+        register("Double", "truncatingRemainder") { _, receiver, args in
+            guard let d = receiver.doubleValue, let divisor = args.first?.doubleValue else { return .double(0) }
+            return .double(d.truncatingRemainder(dividingBy: divisor))
+        }
+        register("Double", "description") { _, receiver, _ in
+            guard let d = receiver.doubleValue else { return .string("") }
+            return .string(String(d))
+        }
+    }
+
+    // MARK: - Bool Methods
+
+    private func registerBoolMethods() {
+        register("Bool", "toggle") { _, receiver, _ in
+            guard let b = receiver.boolValue else { return .bool(false) }
+            return .bool(!b)
+        }
+        register("Bool", "description") { _, receiver, _ in
+            guard let b = receiver.boolValue else { return .string("") }
+            return .string(String(b))
+        }
     }
 
     // MARK: - Array Methods
@@ -234,6 +308,60 @@ public final class BuiltinMethodRegistry {
             guard case .array(let arr) = receiver else { return receiver }
             return .array(Array(arr.suffix(args.first?.intValue ?? 0)))
         }
+        register("Array", "insert") { _, receiver, args in
+            guard case .array(var arr) = receiver, args.count >= 2,
+                  let index = args[1].intValue else { return receiver }
+            arr.insert(args[0], at: min(index, arr.count))
+            return .array(arr)
+        }
+        register("Array", "removeAll") { _, receiver, _ in
+            guard case .array = receiver else { return receiver }
+            return .array([])
+        }
+        register("Array", "shuffle") { _, receiver, _ in
+            guard case .array(var arr) = receiver else { return receiver }
+            arr.shuffle()
+            return .array(arr)
+        }
+        register("Array", "shuffled") { _, receiver, _ in
+            guard case .array(let arr) = receiver else { return receiver }
+            return .array(arr.shuffled())
+        }
+        register("Array", "randomElement") { _, receiver, _ in
+            guard case .array(let arr) = receiver, let elem = arr.randomElement() else { return .nil_ }
+            return elem
+        }
+        register("Array", "firstIndex") { vm, receiver, args in
+            guard case .array(let arr) = receiver, let target = args.first else { return .nil_ }
+            if case .closure = target {
+                for (i, item) in arr.enumerated() {
+                    let result = try vm.invokeValue(target, args: [item])
+                    if result.isTruthy { return .int(i) }
+                }
+                return .nil_
+            }
+            if let idx = arr.firstIndex(where: { $0 == target }) { return .int(idx) }
+            return .nil_
+        }
+        register("Array", "lastIndex") { vm, receiver, args in
+            guard case .array(let arr) = receiver, let target = args.first else { return .nil_ }
+            if case .closure = target {
+                for i in stride(from: arr.count - 1, through: 0, by: -1) {
+                    let result = try vm.invokeValue(target, args: [arr[i]])
+                    if result.isTruthy { return .int(i) }
+                }
+                return .nil_
+            }
+            if let idx = arr.lastIndex(where: { $0 == target }) { return .int(idx) }
+            return .nil_
+        }
+        register("Array", "swapAt") { _, receiver, args in
+            guard case .array(var arr) = receiver, args.count >= 2,
+                  let i = args[0].intValue, let j = args[1].intValue,
+                  i >= 0, j >= 0, i < arr.count, j < arr.count else { return receiver }
+            arr.swapAt(i, j)
+            return .array(arr)
+        }
     }
 
     // MARK: - String Methods
@@ -276,6 +404,29 @@ public final class BuiltinMethodRegistry {
             guard case .string(let s) = receiver else { return receiver }
             return .array(s.reversed().map { .string(String($0)) })
         }
+        register("String", "dropFirst") { _, receiver, args in
+            guard case .string(let s) = receiver else { return receiver }
+            let n = args.first?.intValue ?? 1
+            return .string(String(s.dropFirst(n)))
+        }
+        register("String", "dropLast") { _, receiver, args in
+            guard case .string(let s) = receiver else { return receiver }
+            let n = args.first?.intValue ?? 1
+            return .string(String(s.dropLast(n)))
+        }
+        register("String", "prefix") { _, receiver, args in
+            guard case .string(let s) = receiver, let n = args.first?.intValue else { return receiver }
+            return .string(String(s.prefix(n)))
+        }
+        register("String", "suffix") { _, receiver, args in
+            guard case .string(let s) = receiver, let n = args.first?.intValue else { return receiver }
+            return .string(String(s.suffix(n)))
+        }
+        register("String", "firstIndex") { _, receiver, args in
+            guard case .string(let s) = receiver, let target = args.first?.stringValue?.first else { return .nil_ }
+            if let idx = s.firstIndex(of: target) { return .int(s.distance(from: s.startIndex, to: idx)) }
+            return .nil_
+        }
     }
 
     // MARK: - Dictionary Methods
@@ -317,6 +468,37 @@ public final class BuiltinMethodRegistry {
                       case .string(let ka) = pa[0], case .string(let kb) = pb[0] else { return false }
                 return ka < kb
             })
+        }
+        register("Dictionary", "removeAll") { _, receiver, _ in
+            guard case .dictionary = receiver else { return receiver }
+            return .dictionary([:])
+        }
+        register("Dictionary", "mapValues") { vm, receiver, args in
+            guard case .dictionary(let d) = receiver, let transform = args.first else { return receiver }
+            var result: [String: Value] = [:]
+            for (key, value) in d {
+                result[key] = try vm.invokeValue(transform, args: [value])
+            }
+            return .dictionary(result)
+        }
+        register("Dictionary", "filter") { vm, receiver, args in
+            guard case .dictionary(let d) = receiver, let pred = args.first else { return receiver }
+            var result: [String: Value] = [:]
+            for (key, value) in d {
+                let keep = try vm.invokeValue(pred, args: [.string(key), value])
+                if keep.isTruthy { result[key] = value }
+            }
+            return .dictionary(result)
+        }
+        register("Dictionary", "merge") { _, receiver, args in
+            guard case .dictionary(var d) = receiver, case .dictionary(let other) = args.first else { return receiver }
+            d.merge(other) { _, new in new }
+            return .dictionary(d)
+        }
+        register("Dictionary", "forEach") { vm, receiver, args in
+            guard case .dictionary(let d) = receiver, let closure = args.first else { return .void }
+            for (key, value) in d { _ = try vm.invokeValue(closure, args: [.string(key), value]) }
+            return .void
         }
     }
 

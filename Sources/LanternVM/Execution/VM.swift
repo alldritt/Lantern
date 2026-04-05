@@ -902,6 +902,46 @@ public final class VM: @unchecked Sendable {
 
     private func getProperty(_ value: Value, name: String) throws -> Value {
         switch value {
+        case .int(let n):
+            switch name {
+            case "magnitude": return .int(Int(n.magnitude))
+            case "description": return .string(String(n))
+            case "isZero": return .bool(n == 0)
+            default:
+                if let impl = builtinMethods.lookup("Int", name) { return try impl(self, value, []) }
+                // Check extension computed properties
+                if let getter = environment.getGlobal("Int.__get_\(name)") {
+                    return try invokeValue(getter, args: [value])
+                }
+                throw InterpreterError.undefinedProperty(name, on: "Int", at: loc())
+            }
+        case .double(let d):
+            switch name {
+            case "isNaN": return .bool(d.isNaN)
+            case "isInfinite": return .bool(d.isInfinite)
+            case "isFinite": return .bool(d.isFinite)
+            case "isZero": return .bool(d.isZero)
+            case "isNormal": return .bool(d.isNormal)
+            case "magnitude": return .double(d.magnitude)
+            case "sign": return .string(d.sign == .plus ? "plus" : "minus")
+            case "description": return .string(String(d))
+            default:
+                if let impl = builtinMethods.lookup("Double", name) { return try impl(self, value, []) }
+                if let getter = environment.getGlobal("Double.__get_\(name)") {
+                    return try invokeValue(getter, args: [value])
+                }
+                throw InterpreterError.undefinedProperty(name, on: "Double", at: loc())
+            }
+        case .bool(let b):
+            switch name {
+            case "description": return .string(String(b))
+            default:
+                if let impl = builtinMethods.lookup("Bool", name) { return try impl(self, value, []) }
+                if let getter = environment.getGlobal("Bool.__get_\(name)") {
+                    return try invokeValue(getter, args: [value])
+                }
+                throw InterpreterError.undefinedProperty(name, on: "Bool", at: loc())
+            }
         case .array(let arr):
             switch name {
             case "count": return .int(arr.count)

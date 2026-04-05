@@ -183,6 +183,11 @@ public final class BytecodeCompiler: @unchecked Sendable {
         let builtinLoc = SourceLocation(fileIndex: 0, line: 0, column: 0)
         symbolTable.register("success", kind: .enumCase(typeName: "Result"), location: builtinLoc)
         symbolTable.register("failure", kind: .enumCase(typeName: "Result"), location: builtinLoc)
+
+        // Register core types so Type.member syntax compiles as qualified global lookup
+        for typeName in ["Int", "Double", "Float", "Bool", "String", "Array", "Dictionary", "Result"] {
+            symbolTable.register(typeName, kind: .type(.struct), location: builtinLoc)
+        }
     }
 
     // MARK: - Source Location Helper
