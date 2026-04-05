@@ -16,9 +16,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
     var continueTargets: [Int] = []
     var loopDepth = 0
     var compilingMethodOfType: String? = nil
-    /// All known property names for the type currently being compiled.
-    /// Used to validate implicit self.property references at compile time.
+    /// All known property and method names for the type currently being compiled.
+    /// Used to validate implicit self references at compile time.
     var currentTypePropertyNames: Set<String> = []
+    var currentTypeMethodNames: Set<String> = []
     /// Set of @State property names for the current View type being compiled
     var statePropertyNames: Set<String> = []
     /// Set of @Binding property names for the current View type

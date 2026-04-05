@@ -127,6 +127,7 @@ extension BytecodeCompiler {
         let savedEnvProps = environmentPropertyNames
         let savedAppStorage = appStorageProperties
         let savedTypeProps = currentTypePropertyNames
+        let savedTypeMethods = currentTypeMethodNames
         isCompilingViewType = decl.conformances.contains("View")
         statePropertyNames = []
         bindingPropertyNames = []
@@ -169,11 +170,14 @@ extension BytecodeCompiler {
             }
         }
 
-        // Build the set of all known property names for this type
+        // Build the set of all known member names for this type
         currentTypePropertyNames = Set(properties.map(\.name))
+        currentTypeMethodNames = []
         for member in decl.members {
             if let computed = member as? ComputedPropertyNode {
                 currentTypePropertyNames.insert(computed.name)
+            } else if let funcDecl = member as? FunctionDeclarationNode {
+                currentTypeMethodNames.insert(funcDecl.name)
             }
         }
 
@@ -231,6 +235,7 @@ extension BytecodeCompiler {
 
         // Restore View type tracking state
         currentTypePropertyNames = savedTypeProps
+        currentTypeMethodNames = savedTypeMethods
         isCompilingViewType = savedIsViewType
         statePropertyNames = savedStateProps
         bindingPropertyNames = savedBindingProps
@@ -246,8 +251,10 @@ extension BytecodeCompiler {
         // Track @Published properties for publishSet opcode emission
         let savedPublishedProps = publishedPropertyNames
         let savedTypeProps = currentTypePropertyNames
+        let savedTypeMethods = currentTypeMethodNames
         publishedPropertyNames = []
         currentTypePropertyNames = []
+        currentTypeMethodNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -272,11 +279,14 @@ extension BytecodeCompiler {
             }
         }
 
-        // Build the set of all known property names for this type
+        // Build the set of all known member names for this type
         currentTypePropertyNames = Set(properties.map(\.name))
+        currentTypeMethodNames = []
         for member in decl.members {
             if let computed = member as? ComputedPropertyNode {
                 currentTypePropertyNames.insert(computed.name)
+            } else if let funcDecl = member as? FunctionDeclarationNode {
+                currentTypeMethodNames.insert(funcDecl.name)
             }
         }
 
@@ -326,6 +336,7 @@ extension BytecodeCompiler {
 
         publishedPropertyNames = savedPublishedProps
         currentTypePropertyNames = savedTypeProps
+        currentTypeMethodNames = savedTypeMethods
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter

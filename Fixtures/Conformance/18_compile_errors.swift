@@ -137,3 +137,21 @@ struct MyView: View {
     }
 }
 // END
+
+// TEST: undefined_method_call_implicit_self
+// EXPECT: ERROR
+struct Baz {
+    var x = 0
+    func test() { nonExistent() }
+}
+// END
+
+// TEST: implicit_member_method_in_closure
+// EXPECT: ERROR
+struct V: View {
+    @State var count = 0
+    var body: some View {
+        Button("tap") { count = .random() }
+    }
+}
+// END

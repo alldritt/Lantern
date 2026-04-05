@@ -44,6 +44,12 @@ extension BytecodeCompiler {
                 let nameIndex = chunk.constantPool.addString(qualifiedName)
                 Instruction.loadGlobal(nameIndex, into: &chunk)
             } else {
+                // Validate implicit self.property access
+                if member.object is SelfNode && compilingMethodOfType != nil
+                    && !currentTypePropertyNames.isEmpty
+                    && !currentTypePropertyNames.contains(member.member) {
+                    diagnosticEngine.error("Value of type '\(compilingMethodOfType!)' has no member '\(member.member)'", at: member.location)
+                }
                 compileExpression(member.object)
                 let nameIndex = chunk.constantPool.addPropertyName(member.member)
                 Instruction.getProperty(nameIndex, into: &chunk)
@@ -352,6 +358,15 @@ extension BytecodeCompiler {
                 for arg in call.arguments { compileExpression(arg.value) }
                 Instruction.call(argCount: UInt8(call.arguments.count), into: &chunk)
             } else {
+                // Validate implicit self.method() calls
+                if memberAccess.object is SelfNode && compilingMethodOfType != nil
+                    && !currentTypePropertyNames.isEmpty
+                    && !currentTypePropertyNames.contains(memberAccess.member)
+                    && !currentTypeMethodNames.contains(memberAccess.member)
+                    && symbolTable.lookup(memberAccess.member) == nil
+                    && !isKnownGlobal(memberAccess.member) {
+                    diagnosticEngine.error("Value of type '\(compilingMethodOfType!)' has no member '\(memberAccess.member)'", at: call.location)
+                }
                 compileExpression(memberAccess.object)
                 for arg in call.arguments { compileExpression(arg.value) }
                 let nameIndex = chunk.constantPool.addMethodName(memberAccess.member)
