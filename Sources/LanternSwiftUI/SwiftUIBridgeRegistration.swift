@@ -79,6 +79,8 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
     if let vm = vm {
         registerContainerTypes(on: registry, vm: vm)
         registerButton(on: registry, vm: vm)
+        registerForEach(on: registry, vm: vm)
+        registerSheetModifier(on: registry, vm: vm)
     }
 
     // MARK: - Modifier Methods
@@ -321,6 +323,88 @@ private func registerButton(on registry: BridgeRegistry, vm: VM) {
         }
 
         return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Button"))
+    }
+}
+
+// MARK: - ForEach
+
+private func registerForEach(on registry: BridgeRegistry, vm: VM) {
+    registry.registerType("ForEach") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        // ForEach(items) { item in ... } — args: [array, closure]
+        guard args.count >= 2,
+              case .array(let items) = args[0],
+              let closure = args.last else { return .nil_ }
+
+        var childViews: [AnyView] = []
+        for item in items {
+            let result = try vm.invokeValue(closure, args: [item])
+            if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                childViews.append(box.view)
+            }
+        }
+
+        let combined = AnyView(
+            ForEach(Array(childViews.enumerated()), id: \.offset) { _, view in view }
+        )
+        return .hostObject(HostObjectRef(object: ViewBox(combined), typeName: "ForEach"))
+    }
+}
+
+// MARK: - Sheet Modifier
+
+private func registerSheetModifier(on registry: BridgeRegistry, vm: VM) {
+    registry.registerMethod(typeName: "View", selector: "sheet", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else {
+            return receiver
+        }
+        // .sheet(isPresented: $binding) { content }
+        let bindingRef = args.compactMap { extractBindingRef($0) }.first
+        let contentClosure = args.first(where: { if case .closure = $0 { return true }; return false })
+
+        if let bindingRef, let contentClosure {
+            let binding = Binding<Bool>(
+                get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
+                set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
+            )
+            let modified = AnyView(box.view.sheet(isPresented: binding) {
+                if let result = try? vm.invokeValue(contentClosure, args: []),
+                   case .hostObject(let ref) = result, let contentBox = ref.object as? ViewBox {
+                    contentBox.view
+                } else {
+                    EmptyView()
+                }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        }
+        return receiver
+    }
+
+    // .alert(title, isPresented: $binding) { actions }
+    registry.registerMethod(typeName: "View", selector: "alert", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else {
+            return receiver
+        }
+        let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
+        let bindingRef = args.compactMap { extractBindingRef($0) }.first
+        let actionClosure = args.first(where: { if case .closure = $0 { return true }; return false })
+
+        if let bindingRef {
+            let binding = Binding<Bool>(
+                get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
+                set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
+            )
+            let modified = AnyView(box.view.alert(title, isPresented: binding) {
+                if let actionClosure, let result = try? vm.invokeValue(actionClosure, args: []),
+                   case .hostObject(let ref) = result, let actionBox = ref.object as? ViewBox {
+                    actionBox.view
+                } else {
+                    Button("OK") { bindingRef.stateStore.set(bindingRef.key, .bool(false)) }
+                }
+            })
+            return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        }
+        return receiver
     }
 }
 

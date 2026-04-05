@@ -51,3 +51,82 @@ import LanternDebugger
         Issue.record("Compilation failed: \(diags)")
     }
 }
+
+@Test func statePropertyDetection() {
+    let interp = Interpreter()
+    let result = interp.compile(source: """
+    struct CounterView: View {
+        @State var count = 0
+        var body: some View {
+            Text("Count: \\(count)")
+        }
+    }
+    """, fileName: "test.swift")
+
+    switch result {
+    case .success(let program):
+        // Verify View conformance is detected
+        let viewTypes = program.typeTable.filter { $0.conformances.contains("View") }
+        #expect(!viewTypes.isEmpty)
+        #expect(viewTypes.first?.name == "CounterView")
+
+        // Execute to register types
+        let execResult = interp.execute(program: program)
+        #expect(execResult != nil)
+
+        // Create instance
+        let instance = interp.createInstance(typeName: "CounterView")
+        #expect(instance != nil)
+    case .failure(let diags):
+        Issue.record("Compilation failed: \(diags)")
+    }
+}
+
+@Test func textConstructorThroughBridge() {
+    let interp = Interpreter()
+    let vm = (interp.debugger as! Debugger).vm
+
+    // Text constructor should be registered as a global
+    let textFn = vm.environment.getGlobal("Text")
+    #expect(textFn != nil, "Text should be registered as global")
+
+    // Invoke it
+    if let textFn {
+        let result = try? vm.invokeValue(textFn, args: [.string("Hello")])
+        #expect(result != nil)
+        if case .hostObject(let ref) = result {
+            #expect(ref.typeName == "Text")
+        } else {
+            Issue.record("Expected hostObject, got \(String(describing: result))")
+        }
+    }
+}
+
+@Test func containerWithMultipleChildren() {
+    let interp = Interpreter()
+    let vm = (interp.debugger as! Debugger).vm
+
+    // VStack should be registered
+    let vstackFn = vm.environment.getGlobal("VStack")
+    #expect(vstackFn != nil, "VStack should be registered")
+
+    // The content closure creates multiple Text views
+    // which should all be collected via ViewCollector
+    let src = """
+    let view = VStack {
+        Text("Line 1")
+        Text("Line 2")
+        Text("Line 3")
+    }
+    """
+    let result = interp.run(source: src)
+    switch result {
+    case .success(let value):
+        // The result should be a hostObject containing a VStack
+        if case .hostObject(let ref) = value {
+            #expect(ref.typeName == "VStack")
+        }
+    case .failure(let err):
+        Issue.record("Execution failed: \(err)")
+    }
+}
