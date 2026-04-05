@@ -125,7 +125,9 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         // Navigation
         "navigationTitle",
         // Styling
-        "listStyle", "animation",
+        "listStyle",
+        // Animation
+        "animation", "transition", "contentTransition", "symbolEffect",
     ]
 
     for modName in modifierNames {
@@ -598,15 +600,31 @@ private func registerNavigationViews(on registry: BridgeRegistry, vm: VM) {
 // MARK: - withAnimation
 
 private func registerWithAnimation(on registry: BridgeRegistry, vm: VM) {
-    // withAnimation { state changes }
-    // Registered as a global function, not a type constructor
+    // withAnimation(.spring()) { state changes }
+    // Parses animation type from first non-closure argument
     let withAnimFn = NativeFunctionRef(name: "withAnimation", arity: -1) { [weak vm] args in
         guard let vm else { return .void }
         let closure = args.first(where: { if case .closure = $0 { return true }; return false })
+        // Parse animation type from non-closure args
+        let animArgs = args.filter { if case .closure = $0 { return false }; return true }
+        let animation = ModifierApplicator.parseAnimation(from: animArgs)
+
         if let closure {
+            // Check for a second closure (completion handler)
+            let closures = args.filter { if case .closure = $0 { return true }; return false }
+            let completionClosure = closures.count > 1 ? closures[1] : nil
+
             var result: Value = .void
-            withAnimation {
-                result = (try? vm.invokeValue(closure, args: [])) ?? .void
+            if let completionClosure {
+                withAnimation(animation) {
+                    result = (try? vm.invokeValue(closure, args: [])) ?? .void
+                } completion: {
+                    _ = try? vm.invokeValue(completionClosure, args: [])
+                }
+            } else {
+                withAnimation(animation) {
+                    result = (try? vm.invokeValue(closure, args: [])) ?? .void
+                }
             }
             return result
         }

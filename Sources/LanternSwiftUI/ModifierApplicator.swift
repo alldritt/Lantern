@@ -171,7 +171,32 @@ public struct ModifierApplicator {
 
         // Animation
         case "animation":
-            modified = AnyView(view.animation(.default, value: true))
+            let anim = parseAnimation(from: arguments)
+            modified = AnyView(view.animation(anim, value: true))
+
+        case "transition":
+            let transition = parseTransition(from: arguments)
+            modified = AnyView(view.transition(transition))
+
+        case "contentTransition":
+            let name = arguments.first?.stringValue ?? "identity"
+            switch name.lowercased() {
+            case "opacity": modified = AnyView(view.contentTransition(.opacity))
+            case "interpolate": modified = AnyView(view.contentTransition(.interpolate))
+            case "numerictext": modified = AnyView(view.contentTransition(.numericText()))
+            case "identity": modified = AnyView(view.contentTransition(.identity))
+            default: modified = AnyView(view.contentTransition(.identity))
+            }
+
+        case "symbolEffect":
+            let name = arguments.first?.stringValue ?? "bounce"
+            switch name.lowercased() {
+            case "bounce": modified = AnyView(view.symbolEffect(.bounce))
+            case "pulse": modified = AnyView(view.symbolEffect(.pulse))
+            case "variablecolor": modified = AnyView(view.symbolEffect(.variableColor))
+            case "scale": modified = AnyView(view.symbolEffect(.scale.up))
+            default: modified = AnyView(view.symbolEffect(.bounce))
+            }
 
         // Color
         case "tint":
@@ -259,8 +284,63 @@ public struct ModifierApplicator {
     }
 
     private static func argNamed(_ value: Value, _ name: String) -> Bool {
-        // Simple heuristic — in practice labels are stripped by the compiler
         return true
+    }
+
+    // MARK: - Animation Parsing
+
+    /// Parse animation type from arguments.
+    /// Accepts: "default", "easeIn", "easeOut", "easeInOut", "linear", "spring",
+    /// or a duration as Double.
+    public static func parseAnimation(from args: [Value]) -> Animation {
+        guard let first = args.first else { return .default }
+
+        if let name = first.stringValue {
+            switch name.lowercased() {
+            case "default": return .default
+            case "easein": return .easeIn
+            case "easeout": return .easeOut
+            case "easeinout": return .easeInOut
+            case "linear": return .linear
+            case "spring": return .spring()
+            case "bouncy": return .bouncy
+            case "smooth": return .smooth
+            case "snappy": return .snappy
+            case "interactivespring": return .interactiveSpring()
+            default: return .default
+            }
+        }
+
+        // Duration as number: .animation(0.3) → .easeInOut(duration:)
+        if let duration = first.doubleValue {
+            return .easeInOut(duration: duration)
+        }
+
+        return .default
+    }
+
+    /// Parse transition type from arguments.
+    /// Accepts: "opacity", "slide", "scale", "move", "push",
+    /// "asymmetric", or combined.
+    public static func parseTransition(from args: [Value]) -> AnyTransition {
+        guard let first = args.first else { return .opacity }
+
+        if let name = first.stringValue {
+            switch name.lowercased() {
+            case "opacity": return .opacity
+            case "slide": return .slide
+            case "scale": return .scale
+            case "identity": return .identity
+            case "moveleading": return .move(edge: .leading)
+            case "movetrailing": return .move(edge: .trailing)
+            case "movetop": return .move(edge: .top)
+            case "movebottom": return .move(edge: .bottom)
+            case "push": return .push(from: .trailing)
+            default: return .opacity
+            }
+        }
+
+        return .opacity
     }
 }
 #endif

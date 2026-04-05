@@ -310,6 +310,72 @@ import LanternBridge
     else { Issue.record("Failed: \(result)") }
 }
 
+// MARK: - Animation Tests
+
+@Test func animationModifierWithType() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").animation(\"spring\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func animationModifierWithDuration() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").animation(0.3)")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func transitionModifier() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").transition(\"slide\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func transitionModifierScale() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").transition(\"scale\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func contentTransitionModifier() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Text(\"Hi\").contentTransition(\"numericText\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Text") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+@Test func symbolEffectModifier() {
+    let interp = Interpreter()
+    let result = interp.run(source: "Image(\"star\").symbolEffect(\"bounce\")")
+    if case .success(let v) = result { #expect(v.hostObjectRef?.typeName == "Image") }
+    else { Issue.record("Failed: \(result)") }
+}
+
+#if canImport(SwiftUI)
+@Test func parseAnimationTypes() {
+    // Test the animation parser directly
+    let defaultAnim = ModifierApplicator.parseAnimation(from: [])
+    #expect(defaultAnim == .default)
+
+    let springAnim = ModifierApplicator.parseAnimation(from: [.string("spring")])
+    #expect(springAnim == .spring())
+
+    let durationAnim = ModifierApplicator.parseAnimation(from: [.double(0.5)])
+    #expect(durationAnim == .easeInOut(duration: 0.5))
+}
+
+@Test func parseTransitionTypes() {
+    let slide = ModifierApplicator.parseTransition(from: [.string("slide")])
+    let scale = ModifierApplicator.parseTransition(from: [.string("scale")])
+    let opacity = ModifierApplicator.parseTransition(from: [.string("opacity")])
+    // Just verify they don't crash — AnyTransition isn't Equatable
+    _ = slide; _ = scale; _ = opacity
+}
+#endif
+
 // MARK: - New Modifier Tests
 
 @Test func modifierTint() {
