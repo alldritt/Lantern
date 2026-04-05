@@ -24,6 +24,10 @@ public final class BytecodeCompiler: @unchecked Sendable {
     var observedObjectPropertyNames: Set<String> = []
     /// Set of @Environment property names for the current View type
     var environmentPropertyNames: Set<String> = []
+    /// Set of @AppStorage property names for the current View type (key → UserDefaults key)
+    var appStorageProperties: [String: String] = [:]
+    /// Accumulated @AppStorage mappings per type: [typeName: [propName: udKey]]
+    public var allAppStorageMappings: [String: [String: String]] = [:]
     /// Set of @Published property names for the current class being compiled
     var publishedPropertyNames: Set<String> = []
     /// Whether the current type conforms to View (enables @State opcode emission)

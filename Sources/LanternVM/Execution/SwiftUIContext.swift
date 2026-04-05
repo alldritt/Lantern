@@ -32,6 +32,8 @@ public final class SwiftUIContext: @unchecked Sendable {
     public let descriptorBuilder: DescriptorBuilderProtocol?
     /// Environment values provided by the host, readable via @Environment
     public var environmentValues: [String: Value] = [:]
+    /// Maps @AppStorage property names to UserDefaults keys
+    public var appStorageKeys: [String: String] = [:]
 
     public init(stateStore: StateStoreProtocol, viewCollector: ViewCollectorProtocol? = nil, descriptorBuilder: DescriptorBuilderProtocol? = nil) {
         self.stateStore = stateStore

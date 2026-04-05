@@ -125,11 +125,13 @@ extension BytecodeCompiler {
         let savedBindingProps = bindingPropertyNames
         let savedObservedProps = observedObjectPropertyNames
         let savedEnvProps = environmentPropertyNames
+        let savedAppStorage = appStorageProperties
         isCompilingViewType = decl.conformances.contains("View")
         statePropertyNames = []
         bindingPropertyNames = []
         observedObjectPropertyNames = []
         environmentPropertyNames = []
+        appStorageProperties = [:]
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -145,6 +147,10 @@ extension BytecodeCompiler {
                     observedObjectPropertyNames.insert(prop.name)
                 }
                 if prop.attributes.contains("Environment") { environmentPropertyNames.insert(prop.name) }
+                if prop.attributes.contains("AppStorage"), let key = prop.attributeArgs["AppStorage"] {
+                    appStorageProperties[prop.name] = key
+                    statePropertyNames.insert(prop.name) // treat as @State for read/write
+                }
             } else if let prop = member as? PropertyNode, !prop.isStatic {
                 properties.append(PropertyInfo(
                     name: prop.name,
@@ -208,12 +214,18 @@ extension BytecodeCompiler {
             }
         }
 
+        // Save @AppStorage mappings for this type before restoring
+        if !appStorageProperties.isEmpty {
+            allAppStorageMappings[decl.name] = appStorageProperties
+        }
+
         // Restore View type tracking state
         isCompilingViewType = savedIsViewType
         statePropertyNames = savedStateProps
         bindingPropertyNames = savedBindingProps
         observedObjectPropertyNames = savedObservedProps
         environmentPropertyNames = savedEnvProps
+        appStorageProperties = savedAppStorage
     }
 
     func compileClassDeclaration(_ decl: ClassDeclarationNode) {

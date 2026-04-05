@@ -108,11 +108,21 @@ final class SyntaxTranslator: SyntaxVisitor {
         let isStatic = decl.modifiers.contains { $0.name.tokenKind == .keyword(.static) }
 
         // Extract property wrapper attributes (@State, @Binding, @Published, etc.)
-        let attributes = decl.attributes.compactMap { attr -> String? in
+        var attributes: [String] = []
+        var attributeArgs: [String: String] = [:] // e.g., ["AppStorage": "darkMode"]
+        for attr in decl.attributes {
             if case .attribute(let attrSyntax) = attr {
-                return attrSyntax.attributeName.trimmedDescription
+                let attrName = attrSyntax.attributeName.trimmedDescription
+                attributes.append(attrName)
+                // Extract argument for attributes like @AppStorage("key")
+                if let args = attrSyntax.arguments, case .argumentList(let argList) = args {
+                    if let firstArg = argList.first {
+                        let argValue = firstArg.expression.trimmedDescription
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                        attributeArgs[attrName] = argValue
+                    }
+                }
             }
-            return nil
         }
 
         guard let binding = decl.bindings.first else { return nil }
@@ -189,6 +199,7 @@ final class SyntaxTranslator: SyntaxVisitor {
             typeAnnotation: typeAnnotation,
             initializer: initializer,
             attributes: attributes,
+            attributeArgs: attributeArgs,
             location: self.location(of: decl)
         )
     }

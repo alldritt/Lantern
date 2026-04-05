@@ -511,10 +511,17 @@ public final class VM: @unchecked Sendable {
         case .stateGet:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
             if let ctx = swiftUIContext {
-                // Check for @Environment values (prefixed with __env_)
                 if name.hasPrefix("__env_") {
                     let envKey = String(name.dropFirst(6))
                     try stack.push(ctx.environmentValues[envKey] ?? .nil_)
+                } else if let udKey = ctx.appStorageKeys[name] {
+                    // @AppStorage: read from UserDefaults
+                    let defaults = Foundation.UserDefaults.standard
+                    if let s = defaults.string(forKey: udKey) { try stack.push(.string(s)) }
+                    else if defaults.object(forKey: udKey) is Int { try stack.push(.int(defaults.integer(forKey: udKey))) }
+                    else if defaults.object(forKey: udKey) is Bool { try stack.push(.bool(defaults.bool(forKey: udKey))) }
+                    else if defaults.object(forKey: udKey) is Double { try stack.push(.double(defaults.double(forKey: udKey))) }
+                    else { try stack.push(ctx.stateStore.get(name)) }
                 } else {
                     try stack.push(ctx.stateStore.get(name))
                 }
@@ -525,7 +532,21 @@ public final class VM: @unchecked Sendable {
         case .stateSet:
             guard let ni = readU16(at: ip + 1), let name = program.constantPool.string(at: ni) else { throw decodeError() }
             let value = stack.pop()
-            swiftUIContext?.stateStore.set(name, value)
+            if let ctx = swiftUIContext, let udKey = ctx.appStorageKeys[name] {
+                // @AppStorage: write to UserDefaults AND state store
+                let defaults = Foundation.UserDefaults.standard
+                switch value {
+                case .string(let s): defaults.set(s, forKey: udKey)
+                case .int(let i): defaults.set(i, forKey: udKey)
+                case .double(let d): defaults.set(d, forKey: udKey)
+                case .bool(let b): defaults.set(b, forKey: udKey)
+                case .nil_: defaults.removeObject(forKey: udKey)
+                default: defaults.set(value.description, forKey: udKey)
+                }
+                ctx.stateStore.set(name, value) // also update state store for SwiftUI re-render
+            } else {
+                swiftUIContext?.stateStore.set(name, value)
+            }
             ip += 3
         case .bindingCreate:
             // Create a binding reference that the bridge can convert to Binding<T>

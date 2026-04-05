@@ -7,6 +7,7 @@ import LanternVM
 public struct ViewStub: View {
     let vm: VM
     let instance: InstanceRef
+    let appStorageKeys: [String: String]
 
     @StateObject private var stateStore = LanternStateStore()
     @SwiftUI.Environment(\.colorScheme) private var colorScheme
@@ -17,9 +18,10 @@ public struct ViewStub: View {
     /// The view descriptor tree from the last evaluation, for debugger inspection.
     public var lastDescriptor: ViewDescriptor? { descriptorBuilder.rootDescriptor }
 
-    public init(vm: VM, instance: InstanceRef) {
+    public init(vm: VM, instance: InstanceRef, appStorageKeys: [String: String] = [:]) {
         self.vm = vm
         self.instance = instance
+        self.appStorageKeys = appStorageKeys
     }
 
     public var body: some View {
@@ -30,6 +32,9 @@ public struct ViewStub: View {
         let previousContext = vm.swiftUIContext
         descriptorBuilder.reset()
         let ctx = SwiftUIContext(stateStore: stateStore, descriptorBuilder: descriptorBuilder)
+
+        // Wire @AppStorage key mappings
+        ctx.appStorageKeys = appStorageKeys
 
         // Populate @Environment values from the real SwiftUI environment
         ctx.environmentValues["colorScheme"] = colorScheme == .dark ? .string("dark") : .string("light")

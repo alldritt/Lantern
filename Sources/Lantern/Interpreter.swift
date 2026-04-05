@@ -68,6 +68,10 @@ public final class Interpreter {
     /// Tracks active LanternObservableWrapper instances by their wrapped InstanceRef identity.
     private var observableWrappers: [ObjectIdentifier: LanternObservableWrapper] = [:]
 
+    /// @AppStorage property-to-UserDefaults-key mappings per type.
+    /// Populated by the compiler's appStorageProperties dict.
+    public var appStorageMappings: [String: [String: String]] = [:] // [typeName: [propName: udKey]]
+
     /// Create an ObservableObject wrapper for an interpreted class instance.
     /// Use this when passing an interpreted class as @ObservedObject to a view.
     public func wrapObservable(_ instance: InstanceRef) -> LanternObservableWrapper {
@@ -390,7 +394,9 @@ public final class Interpreter {
     #if canImport(SwiftUI)
     /// Create a native SwiftUI view from an interpreted view instance.
     public func makeView(from instance: InstanceRef) -> ViewStub {
-        ViewStub(vm: vm, instance: instance)
+        let stub = ViewStub(vm: vm, instance: instance,
+                            appStorageKeys: compiler.allAppStorageMappings[instance.typeName] ?? [:])
+        return stub
     }
 
     /// The current view descriptor tree from the last view body evaluation.

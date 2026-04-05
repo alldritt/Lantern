@@ -38,13 +38,15 @@ public final class VariableDeclarationNode: StatementNode {
     public let typeAnnotation: String?
     public var initializer: ExpressionNode?
     public let attributes: [String]
+    public let attributeArgs: [String: String]
 
-    public init(name: String, isMutable: Bool, typeAnnotation: String? = nil, initializer: ExpressionNode? = nil, attributes: [String] = [], location: SourceLocation) {
+    public init(name: String, isMutable: Bool, typeAnnotation: String? = nil, initializer: ExpressionNode? = nil, attributes: [String] = [], attributeArgs: [String: String] = [:], location: SourceLocation) {
         self.name = name
         self.isMutable = isMutable
         self.typeAnnotation = typeAnnotation
         self.initializer = initializer
         self.attributes = attributes
+        self.attributeArgs = attributeArgs
         super.init(location: location)
     }
 
