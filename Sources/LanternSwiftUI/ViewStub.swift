@@ -9,6 +9,10 @@ public struct ViewStub: View {
     let instance: InstanceRef
 
     @StateObject private var stateStore = LanternStateStore()
+    private let descriptorBuilder = ViewDescriptorBuilder()
+
+    /// The view descriptor tree from the last evaluation, for debugger inspection.
+    public var lastDescriptor: ViewDescriptor? { descriptorBuilder.rootDescriptor }
 
     public init(vm: VM, instance: InstanceRef) {
         self.vm = vm
@@ -22,7 +26,8 @@ public struct ViewStub: View {
     private func evaluateBody() -> AnyView {
         // Set up SwiftUI context so @State opcodes work
         let previousContext = vm.swiftUIContext
-        vm.swiftUIContext = SwiftUIContext(stateStore: stateStore)
+        descriptorBuilder.reset()
+        vm.swiftUIContext = SwiftUIContext(stateStore: stateStore, descriptorBuilder: descriptorBuilder)
         defer { vm.swiftUIContext = previousContext }
 
         // Look up the body computed property getter: TypeName.__get_body

@@ -80,7 +80,9 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         registerContainerTypes(on: registry, vm: vm)
         registerButton(on: registry, vm: vm)
         registerForEach(on: registry, vm: vm)
+        registerNavigationViews(on: registry, vm: vm)
         registerSheetModifier(on: registry, vm: vm)
+        registerWithAnimation(on: registry, vm: vm)
     }
 
     // MARK: - Modifier Methods
@@ -132,6 +134,25 @@ private func registerLifecycleModifiers(on registry: BridgeRegistry, vm: VM) {
         guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
               let closure = args.first else { return receiver }
         let modified = AnyView(box.view.onTapGesture { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .onChange(of: value) { closure } — simplified: takes closure only
+    registry.registerMethod(typeName: "View", selector: "onChange", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
+        // Find the closure argument
+        let closure = args.first(where: { if case .closure = $0 { return true }; return false })
+        guard let closure else { return receiver }
+        // Simplified: trigger on any change (uses a dummy value)
+        let modified = AnyView(box.view.onAppear { _ = try? vm.invokeValue(closure, args: []) })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+
+    // .task { async work } — runs closure on appear (simplified: same as onAppear)
+    registry.registerMethod(typeName: "View", selector: "task", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.task { _ = try? vm.invokeValue(closure, args: []) })
         return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
     }
 }
@@ -406,6 +427,103 @@ private func registerSheetModifier(on registry: BridgeRegistry, vm: VM) {
         }
         return receiver
     }
+}
+
+// MARK: - Navigation Views
+
+private func registerNavigationViews(on registry: BridgeRegistry, vm: VM) {
+    // NavigationLink("Title") { destination }
+    registry.registerType("NavigationLink") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        var title: String? = nil
+        var destinationClosure: Value? = nil
+
+        for arg in args {
+            switch arg {
+            case .string(let s): title = s
+            case .closure: destinationClosure = arg
+            default: break
+            }
+        }
+
+        let view: AnyView
+        if let title, let destClosure = destinationClosure {
+            view = AnyView(NavigationLink(title) {
+                if let result = try? vm.invokeValue(destClosure, args: []),
+                   case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                    box.view
+                } else {
+                    EmptyView()
+                }
+            })
+        } else if let title {
+            view = AnyView(NavigationLink(title, destination: { EmptyView() }))
+        } else {
+            view = AnyView(EmptyView())
+        }
+        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "NavigationLink"))
+    }
+
+    // TabView { tabs }
+    registry.registerType("TabView") { [weak vm] args in
+        guard let vm else { return .nil_ }
+        let collector = ViewCollector()
+        var closureArg: Value? = nil
+
+        for arg in args {
+            if case .closure = arg { closureArg = arg }
+        }
+
+        if let closure = closureArg {
+            let savedContext = vm.swiftUIContext
+            let stateStore = savedContext?.stateStore ?? DummyStateStore()
+            vm.swiftUIContext = SwiftUIContext(stateStore: stateStore, viewCollector: collector)
+            let result = try vm.invokeValue(closure, args: [])
+            vm.swiftUIContext = savedContext
+            if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
+                collector.views.append(box.view)
+            }
+        }
+
+        let combined = collector.buildCombinedView()
+        let view = AnyView(TabView { combined })
+        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "TabView"))
+    }
+
+    // .tabItem { Label(...) }
+    registry.registerMethod(typeName: "View", selector: "tabItem", parameterLabels: []) { [weak vm] receiver, args in
+        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
+              let closure = args.first else { return receiver }
+        let modified = AnyView(box.view.tabItem {
+            if let result = try? vm.invokeValue(closure, args: []),
+               case .hostObject(let labelRef) = result, let labelBox = labelRef.object as? ViewBox {
+                labelBox.view
+            } else {
+                EmptyView()
+            }
+        })
+        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+    }
+}
+
+// MARK: - withAnimation
+
+private func registerWithAnimation(on registry: BridgeRegistry, vm: VM) {
+    // withAnimation { state changes }
+    // Registered as a global function, not a type constructor
+    let withAnimFn = NativeFunctionRef(name: "withAnimation", arity: -1) { [weak vm] args in
+        guard let vm else { return .void }
+        let closure = args.first(where: { if case .closure = $0 { return true }; return false })
+        if let closure {
+            var result: Value = .void
+            withAnimation {
+                result = (try? vm.invokeValue(closure, args: [])) ?? .void
+            }
+            return result
+        }
+        return .void
+    }
+    vm.environment.setGlobal("withAnimation", value: .nativeFunction(withAnimFn))
 }
 
 // MARK: - Helpers

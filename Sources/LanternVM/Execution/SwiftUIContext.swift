@@ -18,15 +18,23 @@ public protocol ViewCollectorProtocol: AnyObject {
     func groupViews(_ count: Int) -> Value
 }
 
+/// Protocol for building a parallel view descriptor tree for debugging.
+public protocol DescriptorBuilderProtocol: AnyObject {
+    func beginView(typeName: String, properties: [String: Value], location: SourceLocation)
+    func endView()
+}
+
 /// Context injected into the VM during SwiftUI view body evaluation.
 /// Nil when running non-SwiftUI code.
 public final class SwiftUIContext: @unchecked Sendable {
     public let stateStore: StateStoreProtocol
     public let viewCollector: ViewCollectorProtocol?
+    public let descriptorBuilder: DescriptorBuilderProtocol?
 
-    public init(stateStore: StateStoreProtocol, viewCollector: ViewCollectorProtocol? = nil) {
+    public init(stateStore: StateStoreProtocol, viewCollector: ViewCollectorProtocol? = nil, descriptorBuilder: DescriptorBuilderProtocol? = nil) {
         self.stateStore = stateStore
         self.viewCollector = viewCollector
+        self.descriptorBuilder = descriptorBuilder
     }
 }
 

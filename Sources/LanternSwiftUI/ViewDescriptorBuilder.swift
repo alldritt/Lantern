@@ -2,7 +2,7 @@
 import LanternVM
 
 /// Builds the descriptor tree during view construction.
-public final class ViewDescriptorBuilder {
+public final class ViewDescriptorBuilder: DescriptorBuilderProtocol {
     private var stack: [(typeName: String, properties: [String: Value], modifiers: [ModifierDescriptor], location: SourceLocation)] = []
     private var childrenStack: [[ViewDescriptor]] = [[]]
 
