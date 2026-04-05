@@ -62,3 +62,40 @@ func classify2(_ n: Int) -> String {
 }
 print(classify2(10))
 // END
+
+// TEST: let_deferred_init_top_level
+// EXPECT: hello
+let greeting: String
+if true {
+greeting = "hello"
+} else {
+greeting = "goodbye"
+}
+print(greeting)
+// END
+
+// TEST: let_deferred_init_top_level_else
+// EXPECT: goodbye
+let farewell: String
+let shouldLeave = true
+if !shouldLeave {
+farewell = "stay"
+} else {
+farewell = "goodbye"
+}
+print(farewell)
+// END
+
+// TEST: let_deferred_init_top_level_multi_branch
+// EXPECT: medium
+let size: String
+let val = 50
+if val < 10 {
+size = "small"
+} else if val < 100 {
+size = "medium"
+} else {
+size = "large"
+}
+print(size)
+// END
