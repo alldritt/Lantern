@@ -14,12 +14,10 @@ public final class ViewDescriptorBuilder: DescriptorBuilderProtocol, @unchecked 
     }
 
     public func addModifier(_ modifier: ModifierDescriptor) {
-        // If a view is currently being built (on the stack), add to it
-        if !stack.isEmpty {
-            stack[stack.count - 1].modifiers.append(modifier)
-            return
-        }
-        // Otherwise, add to the most recently completed view (last child)
+        // Modifiers apply to the most recently completed view (the last child
+        // in the current children list), not to the container being built.
+        // This matches how SwiftUI modifier chaining works:
+        //   Text("hi").font(.title)  →  Text is completed, then .font attaches to it
         guard let lastIdx = childrenStack.indices.last,
               !childrenStack[lastIdx].isEmpty else { return }
         let idx = childrenStack[lastIdx].count - 1

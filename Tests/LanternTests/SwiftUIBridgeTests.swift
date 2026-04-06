@@ -683,8 +683,8 @@ import LanternBridge
     b.beginView(typeName: "Text", properties: [:], location: .unknown)
     b.endView()
     b.beginView(typeName: "Button", properties: [:], location: .unknown)
-    b.addModifier(ModifierDescriptor(name: "padding"))
     b.endView()
+    b.addModifier(ModifierDescriptor(name: "padding")) // modifier applied after endView
     b.endView()
     #expect(b.rootDescriptor?.typeName == "VStack")
     #expect(b.rootDescriptor?.children.count == 2)

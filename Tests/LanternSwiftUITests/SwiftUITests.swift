@@ -134,10 +134,12 @@ struct ViewDescriptorBuilderTests {
         #expect(b.rootDescriptor?.children.count == 1)
     }
     @Test func addModifier() {
+        // Modifiers are applied AFTER the view is completed (endView),
+        // matching how SwiftUI chaining works: Text("hi").padding()
         let b = ViewDescriptorBuilder()
         b.beginView(typeName: "Text", properties: [:], location: .unknown)
-        b.addModifier(ModifierDescriptor(name: "padding"))
         b.endView()
+        b.addModifier(ModifierDescriptor(name: "padding"))
         #expect(b.rootDescriptor?.modifiers.count == 1)
         #expect(b.rootDescriptor?.modifiers.first?.name == "padding")
     }
