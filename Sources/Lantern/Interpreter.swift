@@ -56,6 +56,12 @@ public final class Interpreter {
                 staticMembers.insert("\(typeName).\(propName)")
             }
         }
+        // Add built-in qualified globals (Int.random, Double.pi, etc.)
+        for name in ["Int.random", "Double.random", "Bool.random",
+                      "Int.min", "Int.max", "Double.pi", "Double.infinity", "Double.nan",
+                      "Result.success", "Result.failure"] {
+            staticMembers.insert(name)
+        }
         compiler.externalStaticMembers = staticMembers
         // Wire bridge dispatch into VM for runtime method/property lookup
         vm.bridgeMethodLookup = { [weak bridge] typeName, selector in

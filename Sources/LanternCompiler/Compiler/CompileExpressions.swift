@@ -194,19 +194,9 @@ extension BytecodeCompiler {
     }
 
     /// Resolve an implicit member function call (e.g. `.random()`) to a qualified
-    /// static method like "Int.random" or "Bool.random". Checks known static methods.
+    /// static method like "Int.random" or "Bool.random".
     func resolveImplicitMemberCall(_ name: String) -> String? {
-        // Check core types for static methods
-        for typeName in ["Int", "Double", "Bool", "Array"] {
-            let qualified = "\(typeName).\(name)"
-            if symbolTable.lookup(typeName)?.isType == true {
-                // Type is registered — check if the qualified name might exist as a global
-                // We can't verify at compile time, but these are well-known static methods
-                if ["random"].contains(name) { return qualified }
-            }
-        }
-        // Also check external static members
-        return resolveImplicitMember(name)
+        resolveImplicitMember(name)
     }
 
     func compileIdentifier(_ ident: IdentifierNode) {
