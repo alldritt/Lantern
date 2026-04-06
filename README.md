@@ -1196,14 +1196,58 @@ The bridge uses three layers:
 
 3. **ViewStub** — A native `SwiftUI.View` that evaluates the interpreted `body` computed property on each render. It manages `@State` through `LanternStateStore` and converts the returned `Value` (containing `HostObjectRef(ViewBox)`) back to `AnyView`.
 
-### Limitations
+### SwiftUI Limitations
 
-- **No generics** — `Picker(selection:)` and other generic views have simplified signatures
-- **Limited `@Binding`** — `$property` syntax works for `@State` in View bodies; `@ObservedObject`/`@EnvironmentObject` have basic support
 - **No `sheet`/`alert`/`fullScreenCover`** — presentation modifiers not yet implemented
 - **No `@ViewBuilder` conditionals** — `if`/`else` in view builders doesn't yet produce conditional SwiftUI content (works in closures via runtime branching)
 - **`.resizable()` limitation** — Image-specific modifiers that require `Image` type (not `AnyView`) have reduced effect due to type erasure
+- **Simplified `Picker`/`DatePicker`** — generic selection bindings not fully supported
 - **View descriptor tree** — `currentViewDescriptor` is not yet populated during evaluation
+
+## Language Limitations
+
+Features parsed by SwiftSyntax but not yet fully implemented in the interpreter:
+
+### Concurrency
+- **`async`/`await`** — keywords are parsed and `await` compiles (as a no-op pass-through), but there is no async execution runtime; `async` functions execute synchronously
+- **`actor`** — not implemented; no actor isolation or message passing
+- **Structured concurrency** — `Task { }`, `TaskGroup`, `async let` not implemented
+- **`Sendable`** — no compile-time sendability checking
+
+### Type System
+- **Generics** — `<T>` type parameters are stripped during parsing (`Stack<Int>` becomes `Stack`); no generic specialization, type constraints, or where clauses on generics
+- **Opaque types** — `some View` is recognized for View conformance detection but there is no opaque type enforcement
+- **Existential types** — `any Protocol` not supported
+- **Type inference** — minimal; no expression-level type inference for overload resolution or generic parameter deduction
+
+### Classes & Inheritance
+- **Class inheritance** — `superclass` is parsed and stored but `super.init()`, `super.method()`, and method override resolution are not implemented
+- **`override` keyword** — recognized but not enforced or dispatched
+- **`deinit`** — not implemented; no deterministic deinitialization
+- **ARC** — no reference counting; class instances are never deallocated
+
+### Protocols
+- **Protocol requirements** — conformance is declared and tracked but protocol requirement satisfaction is not verified at compile time
+- **Associated types** — not implemented
+- **Protocol witnesses** — no witness table; method dispatch uses name-based lookup, not protocol conformance dispatch
+- **`some`/`any` protocol types** — not enforced
+
+### Property Wrappers
+- **`@State`/`@Binding`/`@Published`/`@Environment`/`@ObservedObject`/`@AppStorage`** — implemented for SwiftUI via special opcodes
+- **Custom property wrappers** — `@propertyWrapper` not supported; only the built-in set above
+
+### Other Missing Features
+- **`subscript` declarations** — user-defined subscript operators not supported (array/dictionary subscripts are built-in)
+- **Operator overloading** — custom operator declarations not supported
+- **Access control** — `public`/`private`/`internal`/`fileprivate` parsed but not enforced
+- **`lazy` properties** — not implemented
+- **`willSet`/`didSet`** property observers — not implemented (except `@Published` which uses a special opcode)
+- **Regex literals** — not supported
+- **Macros** — not supported
+- **C/Objective-C interop** — not applicable
+- **String index model** — strings use integer indices, not Swift's `String.Index`
+- **`KeyPath`** — not implemented
+- **Variadic generics / parameter packs** — not implemented
 
 ## Project Status
 
