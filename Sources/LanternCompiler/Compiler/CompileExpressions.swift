@@ -465,7 +465,7 @@ extension BytecodeCompiler {
         let funcRef = FunctionRef(
             name: closureName,
             parameters: params,
-            localCount: UInt16(closure.parameters.count + 16),
+            localCount: UInt16(closure.parameters.count + Self.localBufferSize),
             bytecode: [],
             bytecodeOffset: bodyStart
         )

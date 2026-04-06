@@ -236,28 +236,7 @@ public struct ModifierApplicator {
     // MARK: - Helpers
 
     private static func namedColor(_ name: String) -> Color? {
-        switch name.lowercased() {
-        case "red": return .red
-        case "blue": return .blue
-        case "green": return .green
-        case "yellow": return .yellow
-        case "orange": return .orange
-        case "purple": return .purple
-        case "pink": return .pink
-        case "white": return .white
-        case "black": return .black
-        case "gray", "grey": return .gray
-        case "clear": return .clear
-        case "primary": return .primary
-        case "secondary": return .secondary
-        case "brown": return .brown
-        case "cyan": return .cyan
-        case "indigo": return .indigo
-        case "mint": return .mint
-        case "teal": return .teal
-        case "accentcolor": return .accentColor
-        default: return nil
-        }
+        SwiftUIConstants.color(named: name)
     }
 
     /// Extract a Color from a Value — supports both enum cases (.red) and strings ("red").
@@ -284,20 +263,7 @@ public struct ModifierApplicator {
     }
 
     private static func systemFont(_ name: String) -> Font {
-        switch name.lowercased() {
-        case "largetitle": return .largeTitle
-        case "title": return .title
-        case "title2": return .title2
-        case "title3": return .title3
-        case "headline": return .headline
-        case "subheadline": return .subheadline
-        case "body": return .body
-        case "callout": return .callout
-        case "footnote": return .footnote
-        case "caption": return .caption
-        case "caption2": return .caption2
-        default: return .body
-        }
+        SwiftUIConstants.font(named: name)
     }
 
     private static func argumentDict(from args: [Value], for name: String) -> [String: Value] {

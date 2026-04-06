@@ -56,6 +56,48 @@ public final class BytecodeCompiler: @unchecked Sendable {
     /// Qualified names of static members (e.g. "Font.title") for implicit member resolution.
     public var externalStaticMembers: Set<String> = []
 
+    /// Saved state for nested type compilation.
+    struct TypeCompilationState {
+        let isCompilingViewType: Bool
+        let statePropertyNames: Set<String>
+        let bindingPropertyNames: Set<String>
+        let observedObjectPropertyNames: Set<String>
+        let environmentPropertyNames: Set<String>
+        let appStorageProperties: [String: String]
+        let publishedPropertyNames: Set<String>
+        let currentTypePropertyNames: Set<String>
+        let currentTypeMethodNames: Set<String>
+    }
+
+    func saveTypeState() -> TypeCompilationState {
+        TypeCompilationState(
+            isCompilingViewType: isCompilingViewType,
+            statePropertyNames: statePropertyNames,
+            bindingPropertyNames: bindingPropertyNames,
+            observedObjectPropertyNames: observedObjectPropertyNames,
+            environmentPropertyNames: environmentPropertyNames,
+            appStorageProperties: appStorageProperties,
+            publishedPropertyNames: publishedPropertyNames,
+            currentTypePropertyNames: currentTypePropertyNames,
+            currentTypeMethodNames: currentTypeMethodNames
+        )
+    }
+
+    func restoreTypeState(_ state: TypeCompilationState) {
+        isCompilingViewType = state.isCompilingViewType
+        statePropertyNames = state.statePropertyNames
+        bindingPropertyNames = state.bindingPropertyNames
+        observedObjectPropertyNames = state.observedObjectPropertyNames
+        environmentPropertyNames = state.environmentPropertyNames
+        appStorageProperties = state.appStorageProperties
+        publishedPropertyNames = state.publishedPropertyNames
+        currentTypePropertyNames = state.currentTypePropertyNames
+        currentTypeMethodNames = state.currentTypeMethodNames
+    }
+
+    /// Extra stack slots allocated beyond parameters for local variables.
+    static let localBufferSize = 16
+
     public init() {}
 
     // MARK: - Public API

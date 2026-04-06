@@ -113,34 +113,7 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
     //   .foregroundColor(.red)  →  Color.red
     //   .multilineTextAlignment(.center)  →  TextAlignment.center
 
-    let enumTypes: [(String, [String])] = [
-        // Font
-        ("Font", ["largeTitle", "title", "title2", "title3",
-                  "headline", "subheadline", "body",
-                  "callout", "footnote", "caption", "caption2"]),
-        // Color
-        ("Color", ["red", "blue", "green", "yellow", "orange", "purple", "pink",
-                   "white", "black", "gray", "grey", "clear", "primary", "secondary",
-                   "accentColor", "brown", "cyan", "indigo", "mint", "teal"]),
-        // TextAlignment
-        ("TextAlignment", ["leading", "center", "trailing"]),
-        // HorizontalAlignment
-        ("HorizontalAlignment", ["leading", "center", "trailing"]),
-        // VerticalAlignment
-        ("VerticalAlignment", ["top", "center", "bottom", "firstTextBaseline", "lastTextBaseline"]),
-        // Alignment
-        ("Alignment", ["topLeading", "top", "topTrailing",
-                       "leading", "center", "trailing",
-                       "bottomLeading", "bottom", "bottomTrailing"]),
-        // Edge / Edge.Set
-        ("Edge", ["top", "bottom", "leading", "trailing"]),
-        // ContentMode
-        ("ContentMode", ["fit", "fill"]),
-        // Axis
-        ("Axis", ["horizontal", "vertical"]),
-    ]
-
-    for (typeName, caseNames) in enumTypes {
+    for (typeName, caseNames) in SwiftUIConstants.enumTypes {
         for caseName in caseNames {
             let tn = typeName
             let cn = caseName
@@ -195,66 +168,38 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
 
 private func registerLifecycleModifiers(on registry: BridgeRegistry, vm: VM) {
     registry.registerMethod(typeName: "View", selector: "onAppear", parameterLabels: []) { [weak vm] receiver, args in
-        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
-              let closure = args.first else { return receiver }
-        let ctx = vm.swiftUIContext
-        let modified = AnyView(box.view.onAppear {
-            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
-            defer { vm.swiftUIContext = prev }
-            _ = try? vm.invokeValue(closure, args: [])
-        })
-        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        guard let vm, let (ref, box) = unboxView(receiver), let closure = args.first else { return receiver }
+        let action = makeContextAction(vm: vm, closure: closure)
+        return boxView(AnyView(box.view.onAppear(perform: action)), typeName: ref.typeName)
     }
 
     registry.registerMethod(typeName: "View", selector: "onDisappear", parameterLabels: []) { [weak vm] receiver, args in
-        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
-              let closure = args.first else { return receiver }
-        let ctx = vm.swiftUIContext
-        let modified = AnyView(box.view.onDisappear {
-            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
-            defer { vm.swiftUIContext = prev }
-            _ = try? vm.invokeValue(closure, args: [])
-        })
-        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        guard let vm, let (ref, box) = unboxView(receiver), let closure = args.first else { return receiver }
+        let action = makeContextAction(vm: vm, closure: closure)
+        return boxView(AnyView(box.view.onDisappear(perform: action)), typeName: ref.typeName)
     }
 
     registry.registerMethod(typeName: "View", selector: "onTapGesture", parameterLabels: []) { [weak vm] receiver, args in
-        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
-              let closure = args.first else { return receiver }
-        let ctx = vm.swiftUIContext
-        let modified = AnyView(box.view.onTapGesture {
-            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
-            defer { vm.swiftUIContext = prev }
-            _ = try? vm.invokeValue(closure, args: [])
-        })
-        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        guard let vm, let (ref, box) = unboxView(receiver), let closure = args.first else { return receiver }
+        let action = makeContextAction(vm: vm, closure: closure)
+        return boxView(AnyView(box.view.onTapGesture(perform: action)), typeName: ref.typeName)
     }
 
     // .onChange(of: value) { closure } — simplified: takes closure only
     registry.registerMethod(typeName: "View", selector: "onChange", parameterLabels: []) { [weak vm] receiver, args in
-        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else { return receiver }
+        guard let vm, let (ref, box) = unboxView(receiver) else { return receiver }
         let closure = args.first(where: { if case .closure = $0 { return true }; return false })
         guard let closure else { return receiver }
-        let ctx = vm.swiftUIContext
-        let modified = AnyView(box.view.onAppear {
-            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
-            defer { vm.swiftUIContext = prev }
-            _ = try? vm.invokeValue(closure, args: [])
-        })
-        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        let action = makeContextAction(vm: vm, closure: closure)
+        return boxView(AnyView(box.view.onAppear(perform: action)), typeName: ref.typeName)
     }
 
     // .task { async work } — runs closure on appear (simplified: same as onAppear)
     registry.registerMethod(typeName: "View", selector: "task", parameterLabels: []) { [weak vm] receiver, args in
-        guard let vm, let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox,
-              let closure = args.first else { return receiver }
-        let ctx = vm.swiftUIContext
-        let modified = AnyView(box.view.task {
-            let prev = vm.swiftUIContext; vm.swiftUIContext = ctx
-            defer { vm.swiftUIContext = prev }
-            _ = try? vm.invokeValue(closure, args: [])
-        })
-        return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
+        guard let vm, let (ref, box) = unboxView(receiver), let closure = args.first else { return receiver }
+        let action = makeContextAction(vm: vm, closure: closure)
+        nonisolated(unsafe) let a = action
+        return boxView(AnyView(box.view.task { a() }), typeName: ref.typeName)
     }
 }
 
@@ -481,16 +426,7 @@ private func registerButton(on registry: BridgeRegistry, vm: VM) {
             }
         }
 
-        // Capture the SwiftUI context so @State reads/writes work in the action
-        let capturedContext = vm.swiftUIContext
-        let action: () -> Void = {
-            if let actionClosure {
-                let previousContext = vm.swiftUIContext
-                vm.swiftUIContext = capturedContext
-                defer { vm.swiftUIContext = previousContext }
-                _ = try? vm.invokeValue(actionClosure, args: [])
-            }
-        }
+        let action: () -> Void = actionClosure.map { makeContextAction(vm: vm, closure: $0) } ?? {}
 
         let view: AnyView
         if let title {
@@ -924,6 +860,29 @@ private func registerAdditionalViews(on registry: BridgeRegistry, vm: VM) {
 }
 
 // MARK: - Helpers
+
+/// Wrap an AnyView in a ViewBox → HostObjectRef → Value.
+func boxView(_ view: AnyView, typeName: String) -> Value {
+    .hostObject(HostObjectRef(object: ViewBox(view), typeName: typeName))
+}
+
+/// Extract a ViewBox from a Value, or nil if not a view.
+func unboxView(_ value: Value) -> (ref: HostObjectRef, box: ViewBox)? {
+    guard case .hostObject(let ref) = value, let box = ref.object as? ViewBox else { return nil }
+    return (ref, box)
+}
+
+/// Create a closure that invokes a Lantern closure with the SwiftUI context restored.
+/// Used by Button actions, onAppear, onTapGesture, etc.
+func makeContextAction(vm: VM, closure: Value) -> () -> Void {
+    let capturedContext = vm.swiftUIContext
+    return {
+        let prev = vm.swiftUIContext
+        vm.swiftUIContext = capturedContext
+        defer { vm.swiftUIContext = prev }
+        _ = try? vm.invokeValue(closure, args: [])
+    }
+}
 
 /// Box to hold an AnyView inside a HostObjectRef (which requires AnyObject).
 public final class ViewBox: @unchecked Sendable {

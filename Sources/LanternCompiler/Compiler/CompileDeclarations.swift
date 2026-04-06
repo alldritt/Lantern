@@ -86,7 +86,7 @@ extension BytecodeCompiler {
         let funcRef = FunctionRef(
             name: decl.name,
             parameters: parameters,
-            localCount: UInt16(decl.parameters.count + 16), // room for locals
+            localCount: UInt16(decl.parameters.count + Self.localBufferSize), // room for locals
             isAsync: decl.isAsync,
             isThrowing: decl.isThrowing,
             bytecode: [],
@@ -119,15 +119,8 @@ extension BytecodeCompiler {
         emitLocation(decl.location)
         let typeIndex = chunk.constantPool.addTypeName(decl.name)
 
-        // Detect View conformance and @State/@Binding properties
-        let savedIsViewType = isCompilingViewType
-        let savedStateProps = statePropertyNames
-        let savedBindingProps = bindingPropertyNames
-        let savedObservedProps = observedObjectPropertyNames
-        let savedEnvProps = environmentPropertyNames
-        let savedAppStorage = appStorageProperties
-        let savedTypeProps = currentTypePropertyNames
-        let savedTypeMethods = currentTypeMethodNames
+        // Save and reset type compilation state
+        let savedState = saveTypeState()
         isCompilingViewType = decl.conformances.contains("View")
         statePropertyNames = []
         bindingPropertyNames = []
@@ -135,6 +128,7 @@ extension BytecodeCompiler {
         environmentPropertyNames = []
         appStorageProperties = [:]
         currentTypePropertyNames = []
+        currentTypeMethodNames = []
 
         var properties: [PropertyInfo] = []
         for member in decl.members {
@@ -233,25 +227,15 @@ extension BytecodeCompiler {
             allAppStorageMappings[decl.name] = appStorageProperties
         }
 
-        // Restore View type tracking state
-        currentTypePropertyNames = savedTypeProps
-        currentTypeMethodNames = savedTypeMethods
-        isCompilingViewType = savedIsViewType
-        statePropertyNames = savedStateProps
-        bindingPropertyNames = savedBindingProps
-        observedObjectPropertyNames = savedObservedProps
-        environmentPropertyNames = savedEnvProps
-        appStorageProperties = savedAppStorage
+        // Restore type compilation state
+        restoreTypeState(savedState)
     }
 
     func compileClassDeclaration(_ decl: ClassDeclarationNode) {
         emitLocation(decl.location)
         let typeIndex = chunk.constantPool.addTypeName(decl.name)
 
-        // Track @Published properties for publishSet opcode emission
-        let savedPublishedProps = publishedPropertyNames
-        let savedTypeProps = currentTypePropertyNames
-        let savedTypeMethods = currentTypeMethodNames
+        let savedState = saveTypeState()
         publishedPropertyNames = []
         currentTypePropertyNames = []
         currentTypeMethodNames = []
@@ -334,9 +318,7 @@ extension BytecodeCompiler {
             }
         }
 
-        publishedPropertyNames = savedPublishedProps
-        currentTypePropertyNames = savedTypeProps
-        currentTypeMethodNames = savedTypeMethods
+        restoreTypeState(savedState)
     }
 
     /// Compile a method as a global function "TypeName.methodName" with implicit self parameter
@@ -379,7 +361,7 @@ extension BytecodeCompiler {
         var params = [ParameterInfo(label: nil, name: "self")]
         params += decl.parameters.map { ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation) }
 
-        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [], bytecodeOffset: bodyStart)
+        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + Self.localBufferSize), bytecode: [], bytecodeOffset: bodyStart)
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
         functionDebugInfo.append(FunctionDebugInfo(
@@ -431,7 +413,7 @@ extension BytecodeCompiler {
             ParameterInfo(label: $0.externalName, name: $0.internalName, typeAnnotation: $0.typeAnnotation)
         }
 
-        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + 16), bytecode: [], bytecodeOffset: bodyStart)
+        let funcRef = FunctionRef(name: qualifiedName, parameters: params, localCount: UInt16(params.count + Self.localBufferSize), bytecode: [], bytecodeOffset: bodyStart)
         let funcIndex = chunk.constantPool.addFunction(funcRef)
 
         functionDebugInfo.append(FunctionDebugInfo(
@@ -499,7 +481,7 @@ extension BytecodeCompiler {
         let funcRef = FunctionRef(
             name: getterName,
             parameters: [ParameterInfo(name: "self")],
-            localCount: UInt16(1 + 16),
+            localCount: UInt16(1 + Self.localBufferSize),
             bytecode: [],
             bytecodeOffset: bodyStart
         )
@@ -554,7 +536,7 @@ extension BytecodeCompiler {
             let setFuncRef = FunctionRef(
                 name: setterName,
                 parameters: [ParameterInfo(name: "self"), ParameterInfo(name: "newValue")],
-                localCount: UInt16(2 + 16),
+                localCount: UInt16(2 + Self.localBufferSize),
                 bytecode: [],
                 bytecodeOffset: setBodyStart
             )
@@ -627,7 +609,7 @@ extension BytecodeCompiler {
         let funcRef = FunctionRef(
             name: typeName,
             parameters: params,
-            localCount: UInt16(1 + params.count + 16),
+            localCount: UInt16(1 + params.count + Self.localBufferSize),
             bytecode: [],
             bytecodeOffset: bodyStart
         )

@@ -195,23 +195,8 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
     }
 
     public func locals(frameIndex: Int) -> [VariableInfo] {
-        guard let program = loadedProgram else { return [] }
-        let vmCallStack = vm.callStack
-
-        let basePointer: Int
-        let currentOffset: Int
-
-        if vmCallStack.isEmpty {
-            // Synthetic main frame — top-level code uses basePointer 0
-            guard frameIndex == 0 else { return [] }
-            basePointer = 0
-            currentOffset = vm.currentIP
-        } else {
-            guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return [] }
-            let frame = vmCallStack[frameIndex]
-            basePointer = frame.basePointer
-            currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
-        }
+        guard let program = loadedProgram,
+              let (basePointer, currentOffset) = resolveFrameContext(frameIndex: frameIndex) else { return [] }
 
         var result: [VariableInfo] = []
         for record in program.variableTable where record.isInScope(at: currentOffset) {
@@ -311,24 +296,9 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
 
     public func setVariable(name: String, value: Value, inFrame frameIndex: Int) -> Result<VariableModification, DebuggerError> {
         guard isPaused else { return .failure(.notPaused) }
-
-        let vmCallStack = vm.callStack
-        let basePointer: Int
-        let currentOffset: Int
-
-        if vmCallStack.isEmpty {
-            guard frameIndex == 0 else { return .failure(.frameIndexOutOfRange(frameIndex)) }
-            basePointer = 0
-            currentOffset = vm.currentIP
-        } else {
-            guard frameIndex >= 0 && frameIndex < vmCallStack.count else {
-                return .failure(.frameIndexOutOfRange(frameIndex))
-            }
-            let frame = vmCallStack[frameIndex]
-            basePointer = frame.basePointer
-            currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
+        guard let (basePointer, currentOffset) = resolveFrameContext(frameIndex: frameIndex) else {
+            return .failure(.frameIndexOutOfRange(frameIndex))
         }
-
         guard let program = loadedProgram else { return .failure(.variableNotFound(name)) }
 
         // Search variable table for the named variable in scope.
@@ -452,24 +422,25 @@ public final class Debugger: DebuggerInterface, @unchecked Sendable {
 
     // MARK: - Private Helpers
 
+    /// Resolve frame context for a given frame index, handling both real frames
+    /// and the synthetic "main" frame for top-level code.
+    private func resolveFrameContext(frameIndex: Int) -> (basePointer: Int, currentOffset: Int)? {
+        let vmCallStack = vm.callStack
+        if vmCallStack.isEmpty {
+            guard frameIndex == 0 else { return nil }
+            return (basePointer: 0, currentOffset: vm.currentIP)
+        } else {
+            guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return nil }
+            let frame = vmCallStack[frameIndex]
+            let offset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
+            return (basePointer: frame.basePointer, currentOffset: offset)
+        }
+    }
+
     /// Collect all in-scope local variable names and their stack values for a given frame.
     private func inScopeLocals(frameIndex: Int) -> [(name: String, stackIndex: Int, value: Value)] {
-        guard let program = loadedProgram else { return [] }
-        let vmCallStack = vm.callStack
-
-        let basePointer: Int
-        let currentOffset: Int
-
-        if vmCallStack.isEmpty {
-            guard frameIndex == 0 else { return [] }
-            basePointer = 0
-            currentOffset = vm.currentIP
-        } else {
-            guard frameIndex >= 0 && frameIndex < vmCallStack.count else { return [] }
-            let frame = vmCallStack[frameIndex]
-            basePointer = frame.basePointer
-            currentOffset = (frameIndex == vmCallStack.count - 1) ? vm.currentIP : frame.ip
-        }
+        guard let program = loadedProgram,
+              let (basePointer, currentOffset) = resolveFrameContext(frameIndex: frameIndex) else { return [] }
 
         var result: [(name: String, stackIndex: Int, value: Value)] = []
         for record in program.variableTable where record.isInScope(at: currentOffset) {
