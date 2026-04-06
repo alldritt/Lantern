@@ -255,6 +255,10 @@ public final class Interpreter {
             guard let arg = args.first else { return .array([]) }
             if case .array(let a) = arg { return .array(a) }
             if case .string(let s) = arg { return .array(s.map { .string(String($0)) }) }
+            if case .range(let lo, let hi, let inclusive) = arg {
+                let upper = inclusive ? hi : hi - 1
+                return .array((lo...upper).map { .int($0) })
+            }
             return .array([arg])
         }
         vm.environment.setGlobal("Array", value: .nativeFunction(arrayFn))
