@@ -183,7 +183,19 @@ extension BytecodeCompiler {
 
     /// Resolve an implicit member name (e.g. "title" from `.title`) to a qualified global
     /// like "Font.title". Returns the qualified name if found, nil otherwise.
+    /// Checks core types first in a deterministic priority order, then bridge types.
     func resolveImplicitMember(_ name: String) -> String? {
+        // Check core types in priority order (Int before Bool to prefer numeric resolution)
+        for typeName in ["Int", "Double", "Float", "String", "Array", "Dictionary",
+                          "Bool", "Result",
+                          "Font", "Color", "Animation", "AnyTransition",
+                          "TextAlignment", "Alignment", "Edge", "ContentMode", "Axis"] {
+            let qualified = "\(typeName).\(name)"
+            if externalStaticMembers.contains(qualified) {
+                return qualified
+            }
+        }
+        // Then check remaining external globals (bridge types)
         for typeName in externalGlobals {
             let qualified = "\(typeName).\(name)"
             if externalStaticMembers.contains(qualified) {
