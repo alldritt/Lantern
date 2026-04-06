@@ -191,3 +191,37 @@ print("Line1\nLine2")
 // EXPECT: A	B
 print("A\tB")
 // END
+// === Format Specifiers ===
+
+// TEST: specifier_float_precision
+// EXPECT: 3.14
+let pi = 3.14159265
+print("\(pi, specifier: "%.2f")")
+// END
+
+// TEST: specifier_hex
+// EXPECT: ff
+print("\(255, specifier: "%x")")
+// END
+
+// TEST: specifier_padded_int
+// EXPECT: 00042
+print("\(42, specifier: "%05d")")
+// END
+
+// TEST: specifier_scientific
+// EXPECT: 1.23e+04
+print("\(12345.6789, specifier: "%.2e")")
+// END
+
+// TEST: specifier_in_text
+// EXPECT: Price: $9.99
+let price = 9.99
+print("Price: $\(price, specifier: "%.2f")")
+// END
+
+// TEST: specifier_mixed_with_plain
+// EXPECT: Value is 3.1 out of 10
+let val = 3.14159
+print("Value is \(val, specifier: "%.1f") out of \(10)")
+// END

@@ -22,6 +22,11 @@ extension BytecodeCompiler {
             }
             chunk.write(.interpolate)
             chunk.write(UInt8(interpolation.segments.count))
+        } else if let formatted = expr as? FormattedInterpolationNode {
+            // \(value, specifier: "%.2f") — compile value, then format it
+            compileExpression(formatted.value)
+            Instruction.constString(formatted.specifier, into: &chunk)
+            chunk.write(.formatString)
         } else if let ident = expr as? IdentifierNode {
             compileIdentifier(ident)
         } else if let member = expr as? MemberAccessNode {

@@ -464,6 +464,17 @@ public final class VM: @unchecked Sendable {
             var segs: [Value] = []; for _ in 0..<count { segs.append(stack.pop()) }
             try stack.push(.string(segs.reversed().map(\.description).joined())); ip += 2
 
+        case .formatString:
+            // Stack: [value, specifier] → formatted string
+            let specifier = stack.pop()
+            let value = stack.pop()
+            let fmt = specifier.stringValue ?? "%@"
+            let formatted: String
+            if let i = value.intValue { formatted = String(format: fmt, i) }
+            else if let d = value.doubleValue { formatted = String(format: fmt, d) }
+            else { formatted = String(format: fmt, value.description) }
+            try stack.push(.string(formatted)); ip += 1
+
         // Range
         case .makeRange:
             guard let inc = readU8(at: ip + 1) else { throw decodeError() }

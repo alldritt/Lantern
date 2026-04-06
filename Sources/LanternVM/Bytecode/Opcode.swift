@@ -77,6 +77,7 @@ public enum Opcode: UInt8, Sendable, CaseIterable {
 
     // MARK: String Interpolation
     case interpolate    = 0x70  // u8 segment count
+    case formatString   = 0x72  // pop specifier, pop value, push formatted string
 
     // MARK: Range
     case makeRange      = 0x71  // u8 inclusive flag
@@ -119,7 +120,7 @@ extension Opcode {
              .loadLastSelf,
              .wrapOptional, .unwrapOptional, .nilCoalesce,
              .throw_, .deferPop, .popHandler,
-             .viewCollect,
+             .viewCollect, .formatString,
              .breakpoint, .halt:
             return 1
 

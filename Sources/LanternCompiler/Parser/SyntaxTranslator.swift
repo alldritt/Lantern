@@ -898,9 +898,23 @@ final class SyntaxTranslator: SyntaxVisitor {
                 }
             case .expressionSegment(let seg):
                 hasInterpolation = true
-                for expr in seg.expressions {
-                    if let translated = translateExpr(expr.expression) {
-                        segments.append(translated)
+                // Check for specifier: label — \(value, specifier: "%.2f")
+                let exprs = Array(seg.expressions)
+                if exprs.count >= 2,
+                   let valueExpr = translateExpr(exprs[0].expression),
+                   exprs[1].label?.trimmedDescription == "specifier",
+                   let specLiteral = exprs[1].expression.as(StringLiteralExprSyntax.self) {
+                    let specText = specLiteral.segments.compactMap { seg -> String? in
+                        if case .stringSegment(let s) = seg { return s.content.text }
+                        return nil
+                    }.joined()
+                    segments.append(FormattedInterpolationNode(
+                        value: valueExpr, specifier: specText, location: self.location(of: seg)))
+                } else {
+                    for expr in exprs {
+                        if let translated = translateExpr(expr.expression) {
+                            segments.append(translated)
+                        }
                     }
                 }
             }

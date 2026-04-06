@@ -90,6 +90,22 @@ public final class StringInterpolationNode: ExpressionNode {
     }
 }
 
+/// A string interpolation segment with a format specifier: `\(value, specifier: "%.2f")`
+public final class FormattedInterpolationNode: ExpressionNode {
+    public let value: ExpressionNode
+    public let specifier: String
+
+    public init(value: ExpressionNode, specifier: String, location: SourceLocation) {
+        self.value = value
+        self.specifier = specifier
+        super.init(location: location)
+    }
+
+    override public func accept<V: ASTVisitor>(_ visitor: V) throws -> V.Result {
+        try visitor.visitExpression(self)
+    }
+}
+
 // MARK: - References
 
 public final class IdentifierNode: ExpressionNode {

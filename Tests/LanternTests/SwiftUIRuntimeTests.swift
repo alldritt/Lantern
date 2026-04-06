@@ -981,6 +981,51 @@ struct ClosureStateMutationTests {
     }
 }
 
+// MARK: - Format Specifier Tests
+
+@Suite("Format Specifiers")
+struct FormatSpecifierTests {
+
+    private func run(_ source: String) -> String {
+        let interp = Interpreter()
+        let output = CapturedOutputHandler()
+        interp.outputHandler = output
+        _ = interp.run(source: source)
+        return output.printOutput.joined().trimmingCharacters(in: .newlines)
+    }
+
+    @Test func floatPrecision() {
+        #expect(run("print(\"\\(3.14159, specifier: \"%.2f\")\")") == "3.14")
+    }
+
+    @Test func hexFormat() {
+        #expect(run("print(\"\\(255, specifier: \"%x\")\")") == "ff")
+    }
+
+    @Test func paddedInt() {
+        #expect(run("print(\"\\(42, specifier: \"%05d\")\")") == "00042")
+    }
+
+    @Test func mixedSpecifierAndPlain() {
+        #expect(run("let x = 3.14159; print(\"\\(x, specifier: \"%.1f\") of \\(10)\")") == "3.1 of 10")
+    }
+
+    @Test func specifierInViewBody() throws {
+        let h = try ViewTestHarness(
+            source: """
+            struct V: View {
+                @State var value = 3.14159
+                var body: some View { Text("\\(value, specifier: \"%.2f\")") }
+            }
+            """,
+            stateDefaults: ["value": .double(3.14159)]
+        )
+        // Should compile and invoke without error
+        let result = try h.invokeBody(typeName: "V", properties: [("value", .double(3.14159))])
+        #expect(result.hostObjectRef != nil)
+    }
+}
+
 // MARK: - Geometric Shape Tests
 
 @Suite("Geometric Shapes")
