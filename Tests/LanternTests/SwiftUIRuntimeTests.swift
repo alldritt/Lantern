@@ -1114,6 +1114,24 @@ struct EnumStyleModifierTests {
         """)
     }
 
+    // Position modifier
+    @Test func positionModifier() { expectView("Circle().fill(.red).position(100, 200)") }
+
+    // Offset modifier
+    @Test func offsetModifier() { expectView("Text(\"Hi\").offset(10, 20)") }
+
+    // Overlay with color
+    @Test func overlayColor() { expectView("Rectangle().overlay(.red)") }
+
+    // Overlay with view
+    @Test func overlayView() { expectView("Rectangle().fill(.blue).overlay(Text(\"On top\"))") }
+
+    // Background with view
+    @Test func backgroundView() { expectView("Text(\"Front\").background(Circle().fill(.red))") }
+
+    // Frame variants
+    @Test func frameWidthHeight() { expectView("Text(\"Hi\").frame(200, 100)") }
+
     // Enum modifiers in View body
     @Test func enumModifiersInViewBody() throws {
         let h = try ViewTestHarness(source: """

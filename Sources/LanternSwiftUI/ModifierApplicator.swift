@@ -27,9 +27,22 @@ public struct ModifierApplicator {
             }
 
         case "frame":
+            // Supports: .frame(width:height:), .frame(minWidth:maxWidth:minHeight:maxHeight:alignment:)
+            // Also: .frame(maxWidth: .infinity) via special .infinity enum case
             let width = arguments.first { argNamed($0, "width") }?.doubleValue.map { CGFloat($0) }
             let height = arguments.first { argNamed($0, "height") }?.doubleValue.map { CGFloat($0) }
-            modified = AnyView(view.frame(width: width, height: height))
+            let maxWidth = Self.dimensionValue(from: arguments, named: "maxWidth")
+            let maxHeight = Self.dimensionValue(from: arguments, named: "maxHeight")
+            let minWidth = Self.dimensionValue(from: arguments, named: "minWidth")
+            let minHeight = Self.dimensionValue(from: arguments, named: "minHeight")
+            if maxWidth != nil || maxHeight != nil || minWidth != nil || minHeight != nil {
+                modified = AnyView(view.frame(
+                    minWidth: minWidth, maxWidth: maxWidth,
+                    minHeight: minHeight, maxHeight: maxHeight
+                ))
+            } else {
+                modified = AnyView(view.frame(width: width, height: height))
+            }
 
         case "fixedSize":
             modified = AnyView(view.fixedSize())
@@ -38,6 +51,11 @@ public struct ModifierApplicator {
             let x = arguments.first?.doubleValue ?? 0
             let y = arguments.count > 1 ? arguments[1].doubleValue ?? 0 : 0
             modified = AnyView(view.offset(x: CGFloat(x), y: CGFloat(y)))
+
+        case "position":
+            let x = arguments.first?.doubleValue ?? 0
+            let y = arguments.count > 1 ? arguments[1].doubleValue ?? 0 : 0
+            modified = AnyView(view.position(x: CGFloat(x), y: CGFloat(y)))
 
         // Typography
         case "font":
@@ -80,6 +98,8 @@ public struct ModifierApplicator {
         case "background":
             if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.background(color))
+            } else if let arg = arguments.first, let (_, box) = unboxView(arg) {
+                modified = AnyView(view.background(box.view))
             } else {
                 modified = AnyView(view)
             }
@@ -87,6 +107,8 @@ public struct ModifierApplicator {
         case "overlay":
             if let arg = arguments.first, let color = Self.colorFromValue(arg) {
                 modified = AnyView(view.overlay(color))
+            } else if let arg = arguments.first, let (_, box) = unboxView(arg) {
+                modified = AnyView(view.overlay(box.view))
             } else {
                 modified = AnyView(view)
             }
@@ -268,6 +290,18 @@ public struct ModifierApplicator {
 
     private static func systemFont(_ name: String) -> Font {
         SwiftUIConstants.font(named: name)
+    }
+
+    /// Extract a dimension value — handles .infinity enum case and numeric values.
+    private static func dimensionValue(from args: [Value], named name: String) -> CGFloat? {
+        for arg in args {
+            if case .enumCase(let ref) = arg, ref.caseName == "infinity" {
+                // .infinity in a frame context → .infinity
+                return .infinity
+            }
+        }
+        // Try numeric argument (positional — named params not fully supported yet)
+        return nil
     }
 
     private static func argumentDict(from args: [Value], for name: String) -> [String: Value] {

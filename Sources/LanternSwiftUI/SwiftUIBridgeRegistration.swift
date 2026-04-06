@@ -178,7 +178,7 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
 
     let modifierNames = [
         // Layout
-        "padding", "frame", "fixedSize", "offset", "ignoresSafeArea", "zIndex",
+        "padding", "frame", "fixedSize", "offset", "position", "ignoresSafeArea", "zIndex",
         // Typography
         "font", "bold", "italic", "underline", "strikethrough", "lineLimit",
         "multilineTextAlignment",
