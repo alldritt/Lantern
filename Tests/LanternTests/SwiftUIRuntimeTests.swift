@@ -1132,6 +1132,24 @@ struct EnumStyleModifierTests {
     // Frame variants
     @Test func frameWidthHeight() { expectView("Text(\"Hi\").frame(200, 100)") }
 
+    // Padding with edge
+    @Test func paddingTop() { expectView("Text(\"Hi\").padding(.top, 20)") }
+    @Test func paddingHorizontal() { expectView("Text(\"Hi\").padding(.horizontal, 10)") }
+    @Test func paddingEdgeOnly() { expectView("Text(\"Hi\").padding(.bottom)") }
+    @Test func paddingDefault() { expectView("Text(\"Hi\").padding()") }
+    @Test func paddingAmount() { expectView("Text(\"Hi\").padding(16)") }
+
+    // Image modifiers
+    @Test func imageResizable() { expectView("Image(\"star\").resizable()") }
+    @Test func imageScaledToFit() { expectView("Image(\"star\").scaledToFit()") }
+    @Test func imageScaledToFill() { expectView("Image(\"star\").scaledToFill()") }
+    @Test func imageScale() { expectView("Image(\"star\").imageScale(.large)") }
+    @Test func imageAspectRatio() { expectView("Image(\"star\").aspectRatio(.fit)") }
+    @Test func symbolRenderingMode() { expectView("Image(\"star\").symbolRenderingMode(.multicolor)") }
+    @Test func imageChain() {
+        expectView("Image(\"star.fill\").resizable().scaledToFit().foregroundColor(.blue)")
+    }
+
     // Enum modifiers in View body
     @Test func enumModifiersInViewBody() throws {
         let h = try ViewTestHarness(source: """

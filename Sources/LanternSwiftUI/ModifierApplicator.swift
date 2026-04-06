@@ -20,8 +20,18 @@ public struct ModifierApplicator {
         switch name {
         // Layout
         case "padding":
-            if let value = arguments.first?.doubleValue {
+            if arguments.count >= 2,
+               let edgeName = SwiftUIConstants.caseName(from: arguments[0]),
+               let amount = arguments[1].doubleValue {
+                // .padding(.top, 10) or .padding(.horizontal, 20)
+                let edges = Self.edgeSet(from: edgeName)
+                modified = AnyView(view.padding(edges, CGFloat(amount)))
+            } else if let value = arguments.first?.doubleValue {
                 modified = AnyView(view.padding(CGFloat(value)))
+            } else if let edgeName = arguments.first.flatMap({ SwiftUIConstants.caseName(from: $0) }) {
+                // .padding(.horizontal) — edge with default amount
+                let edges = Self.edgeSet(from: edgeName)
+                modified = AnyView(view.padding(edges))
             } else {
                 modified = AnyView(view.padding())
             }
@@ -164,6 +174,49 @@ public struct ModifierApplicator {
             let title = arguments.first?.stringValue ?? ""
             modified = AnyView(view.navigationTitle(title))
 
+        // Image modifiers
+        case "resizable":
+            modified = AnyView(view) // resizable is Image-specific; AnyView erases it
+            // Note: For real resizable support, Image would need special handling
+
+        case "scaledToFit":
+            modified = AnyView(view.aspectRatio(contentMode: .fit))
+
+        case "scaledToFill":
+            modified = AnyView(view.aspectRatio(contentMode: .fill))
+
+        case "aspectRatio":
+            let mode = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "fit"
+            if mode.lowercased() == "fill" {
+                modified = AnyView(view.aspectRatio(contentMode: .fill))
+            } else {
+                modified = AnyView(view.aspectRatio(contentMode: .fit))
+            }
+
+        case "imageScale":
+            let scale = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "medium"
+            switch scale.lowercased() {
+            case "small": modified = AnyView(view.imageScale(.small))
+            case "large": modified = AnyView(view.imageScale(.large))
+            default: modified = AnyView(view.imageScale(.medium))
+            }
+
+        case "renderingMode":
+            let mode = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "original"
+            switch mode.lowercased() {
+            case "template": modified = AnyView(view.symbolRenderingMode(.monochrome))
+            default: modified = AnyView(view)
+            }
+
+        case "symbolRenderingMode":
+            let mode = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "monochrome"
+            switch mode.lowercased() {
+            case "multicolor": modified = AnyView(view.symbolRenderingMode(.multicolor))
+            case "hierarchical": modified = AnyView(view.symbolRenderingMode(.hierarchical))
+            case "palette": modified = AnyView(view.symbolRenderingMode(.palette))
+            default: modified = AnyView(view.symbolRenderingMode(.monochrome))
+            }
+
         // Lifecycle — closures handled by the bridge
         case "onAppear", "onDisappear", "onChange", "task":
             // These require closure wrapping, handled at a higher level
@@ -290,6 +343,19 @@ public struct ModifierApplicator {
 
     private static func systemFont(_ name: String) -> Font {
         SwiftUIConstants.font(named: name)
+    }
+
+    private static func edgeSet(from name: String) -> Edge.Set {
+        switch name.lowercased() {
+        case "top": return .top
+        case "bottom": return .bottom
+        case "leading": return .leading
+        case "trailing": return .trailing
+        case "horizontal": return .horizontal
+        case "vertical": return .vertical
+        case "all": return .all
+        default: return .all
+        }
     }
 
     /// Extract a dimension value — handles .infinity enum case and numeric values.

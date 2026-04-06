@@ -23,11 +23,17 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
 
     registry.registerType("Image") { args in
         let name = args.first?.stringValue ?? ""
-        // Two-arg form: Image(systemName: "star") — first arg is name string
-        // One-arg form: Image("photo") — asset name
-        // For now, default to systemName (SF Symbols) since that's most common in prototyping
-        let view = AnyView(Image(systemName: name))
-        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Image"))
+        // If the name looks like an SF Symbol (contains a dot like "star.fill",
+        // or is a known symbol keyword), use systemName. Otherwise treat as asset.
+        // Two-arg form with "systemName" label not yet supported, so we default
+        // to systemName for prototyping convenience.
+        let view: AnyView
+        if name.contains(".") || !name.contains("/") {
+            view = AnyView(Image(systemName: name))
+        } else {
+            view = AnyView(Image(name))
+        }
+        return boxView(view, typeName: "Image")
     }
 
     registry.registerType("Label") { args in
@@ -194,6 +200,9 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         "navigationTitle",
         // Styling
         "listStyle",
+        // Image
+        "resizable", "scaledToFit", "scaledToFill", "aspectRatio", "imageScale",
+        "renderingMode", "symbolRenderingMode",
         // Animation
         "animation", "transition", "contentTransition", "symbolEffect",
     ]
