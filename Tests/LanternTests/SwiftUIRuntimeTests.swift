@@ -1150,6 +1150,37 @@ struct EnumStyleModifierTests {
         expectView("Image(\"star.fill\").resizable().scaledToFit().foregroundColor(.blue)")
     }
 
+    // Text typography modifiers
+    @Test func fontWeight() { expectView("Text(\"Hi\").fontWeight(.bold)") }
+    @Test func fontWeightSemibold() { expectView("Text(\"Hi\").fontWeight(.semibold)") }
+    @Test func fontDesignMonospaced() { expectView("Text(\"Hi\").fontDesign(.monospaced)") }
+    @Test func fontDesignRounded() { expectView("Text(\"Hi\").fontDesign(.rounded)") }
+    @Test func monospaced() { expectView("Text(\"Hi\").monospaced()") }
+    @Test func kerning() { expectView("Text(\"Hi\").kerning(2.0)") }
+    @Test func tracking() { expectView("Text(\"Hi\").tracking(1.5)") }
+    @Test func baselineOffset() { expectView("Text(\"Hi\").baselineOffset(5)") }
+    @Test func textCaseUppercase() { expectView("Text(\"Hi\").textCase(.uppercase)") }
+    @Test func textCaseLowercase() { expectView("Text(\"Hi\").textCase(.lowercase)") }
+    @Test func minimumScaleFactor() { expectView("Text(\"Hi\").minimumScaleFactor(0.5)") }
+    @Test func truncationModeTail() { expectView("Text(\"Hi\").truncationMode(.tail)") }
+    @Test func truncationModeMiddle() { expectView("Text(\"Hi\").truncationMode(.middle)") }
+    @Test func lineSpacing() { expectView("Text(\"Hi\").lineSpacing(8)") }
+    @Test func textFullChain() {
+        expectView("""
+        Text("Styled")
+            .font(.title)
+            .fontWeight(.heavy)
+            .fontDesign(.rounded)
+            .kerning(1.5)
+            .foregroundColor(.blue)
+            .italic()
+            .underline()
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .minimumScaleFactor(0.7)
+        """)
+    }
+
     // Enum modifiers in View body
     @Test func enumModifiersInViewBody() throws {
         let h = try ViewTestHarness(source: """

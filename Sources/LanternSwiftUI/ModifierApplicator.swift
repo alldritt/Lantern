@@ -93,6 +93,58 @@ public struct ModifierApplicator {
             let limit = arguments.first?.intValue
             modified = AnyView(view.lineLimit(limit))
 
+        case "fontWeight":
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "regular"
+            modified = AnyView(view.fontWeight(Self.fontWeight(from: name)))
+
+        case "fontDesign":
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "default"
+            switch name.lowercased() {
+            case "monospaced": modified = AnyView(view.fontDesign(.monospaced))
+            case "rounded": modified = AnyView(view.fontDesign(.rounded))
+            case "serif": modified = AnyView(view.fontDesign(.serif))
+            default: modified = AnyView(view.fontDesign(.default))
+            }
+
+        case "monospaced":
+            modified = AnyView(view.monospaced())
+
+        case "kerning":
+            let value = arguments.first?.doubleValue ?? 0
+            modified = AnyView(view.kerning(CGFloat(value)))
+
+        case "tracking":
+            let value = arguments.first?.doubleValue ?? 0
+            modified = AnyView(view.tracking(CGFloat(value)))
+
+        case "baselineOffset":
+            let value = arguments.first?.doubleValue ?? 0
+            modified = AnyView(view.baselineOffset(CGFloat(value)))
+
+        case "textCase":
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "none"
+            switch name.lowercased() {
+            case "uppercase": modified = AnyView(view.textCase(.uppercase))
+            case "lowercase": modified = AnyView(view.textCase(.lowercase))
+            default: modified = AnyView(view.textCase(nil))
+            }
+
+        case "minimumScaleFactor":
+            let factor = arguments.first?.doubleValue ?? 0.5
+            modified = AnyView(view.minimumScaleFactor(CGFloat(factor)))
+
+        case "truncationMode":
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "tail"
+            switch name.lowercased() {
+            case "head": modified = AnyView(view.truncationMode(.head))
+            case "middle": modified = AnyView(view.truncationMode(.middle))
+            default: modified = AnyView(view.truncationMode(.tail))
+            }
+
+        case "lineSpacing":
+            let value = arguments.first?.doubleValue ?? 0
+            modified = AnyView(view.lineSpacing(CGFloat(value)))
+
         case "multilineTextAlignment":
             let alignment = arguments.first.map { Self.textAlignmentFromValue($0) } ?? .leading
             modified = AnyView(view.multilineTextAlignment(alignment))
@@ -343,6 +395,21 @@ public struct ModifierApplicator {
 
     private static func systemFont(_ name: String) -> Font {
         SwiftUIConstants.font(named: name)
+    }
+
+    private static func fontWeight(from name: String) -> Font.Weight {
+        switch name.lowercased() {
+        case "ultralight": return .ultraLight
+        case "thin": return .thin
+        case "light": return .light
+        case "regular": return .regular
+        case "medium": return .medium
+        case "semibold": return .semibold
+        case "bold": return .bold
+        case "heavy": return .heavy
+        case "black": return .black
+        default: return .regular
+        }
     }
 
     private static func edgeSet(from name: String) -> Edge.Set {

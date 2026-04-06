@@ -187,7 +187,9 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         "padding", "frame", "fixedSize", "offset", "position", "ignoresSafeArea", "zIndex",
         // Typography
         "font", "bold", "italic", "underline", "strikethrough", "lineLimit",
-        "multilineTextAlignment",
+        "multilineTextAlignment", "fontWeight", "fontDesign", "monospaced",
+        "kerning", "tracking", "baselineOffset", "textCase",
+        "minimumScaleFactor", "truncationMode", "lineSpacing",
         // Appearance
         "foregroundColor", "foregroundStyle", "background", "overlay",
         "opacity", "cornerRadius", "shadow", "border", "hidden", "blur",
