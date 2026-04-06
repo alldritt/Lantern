@@ -1141,6 +1141,96 @@ struct ViewHierarchyDescriptorTests {
         #expect(hstack?.children.count == 3, "HStack should have 3 Button children, got \(hstack?.children.count ?? 0)")
     }
 
+    @Test func innerVStackChildrenRecorded() throws {
+        let h = try ViewTestHarness(source: """
+        struct V: View {
+            var body: some View {
+                VStack {
+                    Text("Title")
+                    Divider()
+                    VStack {
+                        Text("Inner1")
+                        Text("Inner2")
+                    }
+                    HStack {
+                        Button("A") { }
+                        Button("B") { }
+                    }
+                }
+            }
+        }
+        """)
+        _ = try h.invokeBody(typeName: "V")
+        let desc = (h.ctx.descriptorBuilder as? ViewDescriptorBuilder)?.rootDescriptor
+
+        #expect(desc?.typeName == "VStack", "Root should be VStack")
+        #expect(desc?.children.count == 4, "VStack should have 4 children: Text, Divider, VStack, HStack. Got \(desc?.children.count ?? 0)")
+
+        // Check inner VStack has children
+        let innerVStack = desc?.children[2]
+        #expect(innerVStack?.typeName == "VStack", "Third child should be VStack, got \(innerVStack?.typeName ?? "nil")")
+        #expect(innerVStack?.children.count == 2, "Inner VStack should have 2 Text children, got \(innerVStack?.children.count ?? 0)")
+        #expect(innerVStack?.children[0].typeName == "Text")
+        #expect(innerVStack?.children[1].typeName == "Text")
+
+        // Check HStack has children
+        let hstack = desc?.children[3]
+        #expect(hstack?.typeName == "HStack")
+        #expect(hstack?.children.count == 2, "HStack should have 2 Button children, got \(hstack?.children.count ?? 0)")
+    }
+
+    @Test func progressDemoDescriptor() throws {
+        let h = try ViewTestHarness(
+            source: """
+            struct ProgressDemo: View {
+                @State var progress = 0.0
+                var body: some View {
+                    VStack(spacing: 24) {
+                        Text("Progress Views")
+                            .font("title")
+                            .bold()
+                        Divider()
+                        VStack {
+                            Text("Indeterminate")
+                                .font("headline")
+                            ProgressView()
+                            Divider()
+                            Text("Determinate")
+                                .font("headline")
+                            ProgressView(progress)
+                                .padding()
+                        }
+                        HStack(spacing: 12) {
+                            Button("0%") { progress = 0.0 }
+                            Button("25%") { progress = 0.25 }
+                            Button("50%") { progress = 0.5 }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            """,
+            stateDefaults: ["progress": .double(0.0)]
+        )
+        _ = try h.invokeBody(typeName: "ProgressDemo", properties: [("progress", .double(0.0))])
+        let desc = (h.ctx.descriptorBuilder as? ViewDescriptorBuilder)?.rootDescriptor
+
+        #expect(desc?.typeName == "VStack", "Root should be VStack")
+        let children = desc?.children ?? []
+        print("Root children: \(children.map(\.typeName))")
+
+        // Inner VStack
+        let innerVStack = children.first(where: { $0.typeName == "VStack" })
+        let innerChildren = innerVStack?.children ?? []
+        print("Inner VStack children: \(innerChildren.map(\.typeName))")
+        #expect(innerChildren.count >= 4, "Inner VStack should have Text, ProgressView, Divider, Text, ProgressView. Got \(innerChildren.count): \(innerChildren.map(\.typeName))")
+
+        // HStack buttons
+        let hstack = children.first(where: { $0.typeName == "HStack" })
+        print("HStack children: \(hstack?.children.map(\.typeName) ?? [])")
+        #expect((hstack?.children.count ?? 0) >= 3, "HStack should have 3 Buttons, got \(hstack?.children.count ?? 0)")
+    }
+
     @Test func descriptorAvailableOnInterpreter() {
         let interp = Interpreter()
         let result = interp.run(source: """
