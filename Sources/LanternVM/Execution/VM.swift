@@ -959,6 +959,7 @@ public final class VM: @unchecked Sendable {
             case "isEmpty": return .bool(arr.isEmpty)
             case "first": return .optional(arr.first)
             case "last": return .optional(arr.last)
+            case "description": return .string(value.description)
             // key/value for dictionary sorted() pairs (2-element arrays)
             case "key" where arr.count == 2: return arr[0]
             case "value" where arr.count == 2: return arr[1]
@@ -968,6 +969,7 @@ public final class VM: @unchecked Sendable {
             switch name {
             case "count": return .int(s.count)
             case "isEmpty": return .bool(s.isEmpty)
+            case "description": return .string(value.description)
             default: throw InterpreterError.undefinedProperty(name, on: "String", at: loc())
             }
         case .dictionary(let d):
@@ -976,6 +978,7 @@ public final class VM: @unchecked Sendable {
             case "isEmpty": return .bool(d.isEmpty)
             case "keys": return .array(d.keys.sorted().map { .string($0) })
             case "values": return .array(Array(d.values))
+            case "description": return .string(value.description)
             default: throw InterpreterError.undefinedProperty(name, on: "Dictionary", at: loc())
             }
         case .instance(let ref):
