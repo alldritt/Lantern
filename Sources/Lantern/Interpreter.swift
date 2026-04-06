@@ -492,13 +492,21 @@ public final class Interpreter {
             store = LanternStateStore()
             stateStores[id] = store
         }
+        let builder = ViewDescriptorBuilder()
+        lastViewDescriptorBuilder = builder
         return ViewStub(vm: vm, instance: instance, stateStore: store,
+                         descriptorBuilder: builder,
                          appStorageKeys: compiler.allAppStorageMappings[instance.typeName] ?? [:])
     }
 
-    /// The current view descriptor tree from the last view body evaluation.
+    /// The view descriptor tree from the last view body evaluation.
+    /// Populated automatically during ViewStub body evaluation via the
+    /// ViewDescriptorBuilder passed through SwiftUIContext.
     public var currentViewDescriptor: ViewDescriptor? {
-        nil // TODO: Track via ViewDescriptorBuilder during evaluation
+        lastViewDescriptorBuilder?.rootDescriptor
     }
+
+    /// Retained reference to the last descriptor builder used during view rendering.
+    var lastViewDescriptorBuilder: ViewDescriptorBuilder?
     #endif
 }

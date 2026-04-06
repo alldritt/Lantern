@@ -8,48 +8,44 @@ import LanternBridge
 public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
     // MARK: - Leaf View Constructors
 
-    registry.registerType("Text") { args in
+    registry.registerType("Text") { [weak vm] args in
         let text = args.first?.stringValue ?? ""
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Text(text))), typeName: "Text"))
+        return boxView(AnyView(Text(text)), typeName: "Text", properties: ["text": .string(text)], vm: vm)
     }
 
-    registry.registerType("Spacer") { _ in
-        .hostObject(HostObjectRef(object: ViewBox(AnyView(Spacer())), typeName: "Spacer"))
+    registry.registerType("Spacer") { [weak vm] _ in
+        boxView(AnyView(Spacer()), typeName: "Spacer", vm: vm)
     }
 
-    registry.registerType("Divider") { _ in
-        .hostObject(HostObjectRef(object: ViewBox(AnyView(Divider())), typeName: "Divider"))
+    registry.registerType("Divider") { [weak vm] _ in
+        boxView(AnyView(Divider()), typeName: "Divider", vm: vm)
     }
 
-    registry.registerType("Image") { args in
+    registry.registerType("Image") { [weak vm] args in
         let name = args.first?.stringValue ?? ""
-        // If the name looks like an SF Symbol (contains a dot like "star.fill",
-        // or is a known symbol keyword), use systemName. Otherwise treat as asset.
-        // Two-arg form with "systemName" label not yet supported, so we default
-        // to systemName for prototyping convenience.
         let view: AnyView
         if name.contains(".") || !name.contains("/") {
             view = AnyView(Image(systemName: name))
         } else {
             view = AnyView(Image(name))
         }
-        return boxView(view, typeName: "Image")
+        return boxView(view, typeName: "Image", properties: ["name": .string(name)], vm: vm)
     }
 
-    registry.registerType("Label") { args in
+    registry.registerType("Label") { [weak vm] args in
         let title = args.first?.stringValue ?? ""
         let systemImage = args.count > 1 ? args[1].stringValue ?? "" : "star"
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Label(title, systemImage: systemImage))), typeName: "Label"))
+        return boxView(AnyView(Label(title, systemImage: systemImage)), typeName: "Label", properties: ["title": .string(title)], vm: vm)
     }
 
-    registry.registerType("ProgressView") { args in
+    registry.registerType("ProgressView") { [weak vm] args in
         let view: AnyView
         if let value = args.first?.doubleValue {
             view = AnyView(ProgressView(value: value))
         } else {
             view = AnyView(ProgressView())
         }
-        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "ProgressView"))
+        return boxView(view, typeName: "ProgressView", vm: vm)
     }
 
     // MARK: - Color
@@ -76,46 +72,45 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
 
     // MARK: - Additional Leaf Views
 
-    registry.registerType("Link") { args in
+    registry.registerType("Link") { [weak vm] args in
         guard args.count >= 2, let title = args[0].stringValue, let urlStr = args[1].stringValue,
               let url = Foundation.URL(string: urlStr) else { return .nil_ }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Link(title, destination: url))), typeName: "Link"))
+        return boxView(AnyView(Link(title, destination: url)), typeName: "Link", properties: ["title": .string(title)], vm: vm)
     }
 
-    registry.registerType("Gauge") { args in
+    registry.registerType("Gauge") { [weak vm] args in
         let value = args.first?.doubleValue ?? 0.5
-        let view = AnyView(Gauge(value: value) { EmptyView() })
-        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Gauge"))
+        return boxView(AnyView(Gauge(value: value) { EmptyView() }), typeName: "Gauge", vm: vm)
     }
 
-    registry.registerType("LabeledContent") { args in
+    registry.registerType("LabeledContent") { [weak vm] args in
         let label = args.first?.stringValue ?? ""
         let content = args.count > 1 ? args[1].stringValue ?? "" : ""
-        let view = AnyView(LabeledContent(label, value: content))
-        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "LabeledContent"))
+        return boxView(AnyView(LabeledContent(label, value: content)), typeName: "LabeledContent", properties: ["label": .string(label)], vm: vm)
     }
 
     // MARK: - Geometric Shapes
 
-    registry.registerType("Circle") { _ in
-        boxView(AnyView(Circle()), typeName: "Circle")
+    registry.registerType("Circle") { [weak vm] _ in
+        boxView(AnyView(Circle()), typeName: "Circle", vm: vm)
     }
 
-    registry.registerType("Rectangle") { _ in
-        boxView(AnyView(Rectangle()), typeName: "Rectangle")
+    registry.registerType("Rectangle") { [weak vm] _ in
+        boxView(AnyView(Rectangle()), typeName: "Rectangle", vm: vm)
     }
 
-    registry.registerType("RoundedRectangle") { args in
+    registry.registerType("RoundedRectangle") { [weak vm] args in
         let radius = args.first?.doubleValue ?? 10
-        return boxView(AnyView(RoundedRectangle(cornerRadius: CGFloat(radius))), typeName: "RoundedRectangle")
+        return boxView(AnyView(RoundedRectangle(cornerRadius: CGFloat(radius))), typeName: "RoundedRectangle",
+                        properties: ["cornerRadius": .double(radius)], vm: vm)
     }
 
-    registry.registerType("Capsule") { _ in
-        boxView(AnyView(Capsule()), typeName: "Capsule")
+    registry.registerType("Capsule") { [weak vm] _ in
+        boxView(AnyView(Capsule()), typeName: "Capsule", vm: vm)
     }
 
-    registry.registerType("Ellipse") { _ in
-        boxView(AnyView(Ellipse()), typeName: "Ellipse")
+    registry.registerType("Ellipse") { [weak vm] _ in
+        boxView(AnyView(Ellipse()), typeName: "Ellipse", vm: vm)
     }
 
     registry.registerType("UnevenRoundedRectangle") { args in
@@ -210,11 +205,12 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
     ]
 
     for modName in modifierNames {
-        registry.registerMethod(typeName: "View", selector: modName, parameterLabels: []) { receiver, args in
+        registry.registerMethod(typeName: "View", selector: modName, parameterLabels: []) { [weak vm] receiver, args in
             guard let ref = receiver.hostObjectRef, let box = ref.object as? ViewBox else {
                 return receiver
             }
-            let (modified, _) = ModifierApplicator.apply(modName, arguments: args, to: box.view)
+            let (modified, descriptor) = ModifierApplicator.apply(modName, arguments: args, to: box.view)
+            vm?.swiftUIContext?.descriptorBuilder?.addModifier(name: descriptor.name, arguments: descriptor.arguments, location: descriptor.sourceLocation)
             return .hostObject(HostObjectRef(object: ViewBox(modified), typeName: ref.typeName))
         }
     }
@@ -405,11 +401,17 @@ private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
             // The VM's pop opcode intercepts ViewBox values when a collector is active.
             let collector = ViewCollector()
             var childBox = ViewBox(AnyView(EmptyView()))
+
+            // Record container in descriptor tree
+            let builder = vm.swiftUIContext?.descriptorBuilder
+            builder?.beginView(typeName: typeName, properties: spacing.flatMap { ["spacing": $0] } ?? [:], location: .unknown)
+
             if let closure = closureArg {
-                // Set up context with collector
+                // Set up context with collector, preserving the descriptor builder
                 let savedContext = vm.swiftUIContext
                 let stateStore = savedContext?.stateStore ?? DummyStateStore()
-                vm.swiftUIContext = SwiftUIContext(stateStore: stateStore, viewCollector: collector)
+                let childCtx = SwiftUIContext(stateStore: stateStore, viewCollector: collector, descriptorBuilder: builder)
+                vm.swiftUIContext = childCtx
 
                 let result = try vm.invokeValue(closure, args: [])
 
@@ -459,6 +461,7 @@ private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
                 containerView = AnyView(childBox.view)
             }
 
+            builder?.endView()
             return .hostObject(HostObjectRef(object: ViewBox(containerView), typeName: typeName))
         }
     }
@@ -924,6 +927,16 @@ private func registerAdditionalViews(on registry: BridgeRegistry, vm: VM) {
 // MARK: - Helpers
 
 /// Wrap an AnyView in a ViewBox → HostObjectRef → Value.
+/// Also records the view in the descriptor builder if active.
+func boxView(_ view: AnyView, typeName: String, properties: [String: Value] = [:], vm: VM? = nil) -> Value {
+    if let builder = vm?.swiftUIContext?.descriptorBuilder {
+        builder.beginView(typeName: typeName, properties: properties, location: .unknown)
+        builder.endView()
+    }
+    return .hostObject(HostObjectRef(object: ViewBox(view), typeName: typeName))
+}
+
+/// Legacy overload without VM for backward compatibility.
 func boxView(_ view: AnyView, typeName: String) -> Value {
     .hostObject(HostObjectRef(object: ViewBox(view), typeName: typeName))
 }

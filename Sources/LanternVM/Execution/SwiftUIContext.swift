@@ -19,9 +19,25 @@ public protocol ViewCollectorProtocol: AnyObject {
 }
 
 /// Protocol for building a parallel view descriptor tree for debugging.
+/// Minimal descriptor for a view in the hierarchy, used at the VM level.
+public struct VMViewDescriptor: Sendable {
+    public let typeName: String
+    public let properties: [String: Value]
+    public let modifierNames: [String]
+    public let children: [VMViewDescriptor]
+
+    public init(typeName: String, properties: [String: Value] = [:], modifierNames: [String] = [], children: [VMViewDescriptor] = []) {
+        self.typeName = typeName; self.properties = properties
+        self.modifierNames = modifierNames; self.children = children
+    }
+}
+
 public protocol DescriptorBuilderProtocol: AnyObject {
     func beginView(typeName: String, properties: [String: Value], location: SourceLocation)
     func endView()
+    func addModifier(name: String, arguments: [String: Value], location: SourceLocation)
+    /// The root view descriptor, if the tree has been built.
+    var rootViewDescriptor: VMViewDescriptor? { get }
 }
 
 /// Context injected into the VM during SwiftUI view body evaluation.
