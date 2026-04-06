@@ -980,4 +980,154 @@ struct ClosureStateMutationTests {
         #expect(h.store.get("x") == .int(50))
     }
 }
+
+// MARK: - Geometric Shape Tests
+
+@Suite("Geometric Shapes")
+struct GeometricShapeTests {
+
+    private func expectView(_ source: String, typeName: String? = nil, _ comment: String = "") {
+        let interp = Interpreter()
+        let result = interp.run(source: source)
+        guard case .success(let value) = result else {
+            Issue.record("Failed to run: \(result) \(comment)"); return
+        }
+        #expect(value.hostObjectRef != nil, "Expected a view \(comment)")
+        if let typeName {
+            #expect(value.hostObjectRef?.typeName == typeName, "Expected \(typeName) \(comment)")
+        }
+    }
+
+    // Shape constructors
+    @Test func circleConstructor() { expectView("Circle()", typeName: "Circle") }
+    @Test func rectangleConstructor() { expectView("Rectangle()", typeName: "Rectangle") }
+    @Test func roundedRectangleConstructor() { expectView("RoundedRectangle(12)", typeName: "RoundedRectangle") }
+    @Test func capsuleConstructor() { expectView("Capsule()", typeName: "Capsule") }
+    @Test func ellipseConstructor() { expectView("Ellipse()", typeName: "Ellipse") }
+
+    // .fill modifier
+    @Test func circleFillEnum() { expectView("Circle().fill(.red)") }
+    @Test func circleFillString() { expectView("Circle().fill(\"blue\")") }
+    @Test func rectangleFillEnum() { expectView("Rectangle().fill(.green)") }
+
+    // .stroke modifier
+    @Test func circleStroke() { expectView("Circle().stroke(.red, 2)") }
+
+    // Shapes inside containers
+    @Test func shapesInVStack() {
+        expectView("""
+        VStack {
+            Circle().fill(.blue)
+            Rectangle().fill(.green)
+            Capsule().fill(.orange)
+        }
+        """, typeName: "VStack")
+    }
+
+    // Shapes in View struct body
+    @Test func shapesInViewBody() throws {
+        let h = try ViewTestHarness(source: """
+        struct V: View {
+            var body: some View {
+                VStack {
+                    Circle().fill(.red)
+                    RoundedRectangle(16).fill(.blue)
+                }
+            }
+        }
+        """)
+        let result = try h.invokeBody(typeName: "V")
+        #expect(result.hostObjectRef?.typeName == "VStack")
+    }
+}
+
+// MARK: - Enum-Style Modifier Tests
+
+@Suite("Enum-Style Modifiers")
+struct EnumStyleModifierTests {
+
+    private func expectView(_ source: String, _ comment: String = "") {
+        let interp = Interpreter()
+        let result = interp.run(source: source)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result) \(comment)"); return
+        }
+        #expect(value.hostObjectRef != nil, "Expected a view \(comment)")
+    }
+
+    // Font enum
+    @Test func fontTitle() { expectView("Text(\"Hi\").font(.title)") }
+    @Test func fontLargeTitle() { expectView("Text(\"Hi\").font(.largeTitle)") }
+    @Test func fontCaption() { expectView("Text(\"Hi\").font(.caption)") }
+    @Test func fontStringBackcompat() { expectView("Text(\"Hi\").font(\"headline\")") }
+
+    // Color enum in modifiers
+    @Test func foregroundColorEnum() { expectView("Text(\"Hi\").foregroundColor(.red)") }
+    @Test func backgroundColorEnum() { expectView("Text(\"Hi\").background(.blue)") }
+    @Test func tintColorEnum() { expectView("Text(\"Hi\").tint(.orange)") }
+    @Test func borderColorEnum() { expectView("Text(\"Hi\").border(.green, 2)") }
+    @Test func foregroundColorString() { expectView("Text(\"Hi\").foregroundColor(\"red\")") }
+
+    // TextAlignment enum
+    @Test func textAlignmentEnum() { expectView("Text(\"Hi\").multilineTextAlignment(.center)") }
+    @Test func textAlignmentString() { expectView("Text(\"Hi\").multilineTextAlignment(\"trailing\")") }
+
+    // Animation enum
+    @Test func animationEaseIn() { expectView("Text(\"Hi\").animation(.easeIn, true)") }
+    @Test func animationSpring() { expectView("Text(\"Hi\").animation(.spring, true)") }
+    @Test func animationString() { expectView("Text(\"Hi\").animation(\"linear\", true)") }
+    @Test func animationDuration() { expectView("Text(\"Hi\").animation(0.3, true)") }
+
+    // Transition enum
+    @Test func transitionSlide() { expectView("Text(\"Hi\").transition(.slide)") }
+    @Test func transitionOpacity() { expectView("Text(\"Hi\").transition(.opacity)") }
+    @Test func transitionString() { expectView("Text(\"Hi\").transition(\"scale\")") }
+
+    // Content transition enum
+    @Test func contentTransitionOpacity() { expectView("Text(\"Hi\").contentTransition(.opacity)") }
+    @Test func contentTransitionString() { expectView("Text(\"Hi\").contentTransition(\"numericText\")") }
+
+    // Symbol effect enum
+    @Test func symbolEffectBounce() { expectView("Image(\"star\").symbolEffect(.bounce)") }
+    @Test func symbolEffectPulse() { expectView("Image(\"star\").symbolEffect(.pulse)") }
+    @Test func symbolEffectString() { expectView("Image(\"star\").symbolEffect(\"variableColor\")") }
+
+    // List style enum
+    @Test func listStylePlain() { expectView("List { Text(\"Item\") }.listStyle(.plain)") }
+    @Test func listStyleString() { expectView("List { Text(\"Item\") }.listStyle(\"plain\")") }
+
+    // Clip shape enum
+    @Test func clipShapeCircle() { expectView("Text(\"Hi\").clipShape(.circle)") }
+    @Test func clipShapeCapsule() { expectView("Text(\"Hi\").clipShape(.capsule)") }
+    @Test func clipShapeString() { expectView("Text(\"Hi\").clipShape(\"rectangle\")") }
+
+    // Chained enum modifiers
+    @Test func chainedEnumModifiers() {
+        expectView("""
+        Text("Styled")
+            .font(.headline)
+            .foregroundColor(.blue)
+            .bold()
+            .padding()
+            .background(.yellow)
+            .clipShape(.capsule)
+        """)
+    }
+
+    // Enum modifiers in View body
+    @Test func enumModifiersInViewBody() throws {
+        let h = try ViewTestHarness(source: """
+        struct V: View {
+            var body: some View {
+                Text("Styled")
+                    .font(.title)
+                    .foregroundColor(.red)
+                    .background(.blue)
+            }
+        }
+        """)
+        let result = try h.invokeBody(typeName: "V")
+        #expect(result.hostObjectRef != nil)
+    }
+}
 #endif
