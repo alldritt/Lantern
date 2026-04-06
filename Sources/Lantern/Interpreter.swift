@@ -297,17 +297,24 @@ public final class Interpreter {
         vm.environment.setGlobal("Result.failure", value: .nativeFunction(failureFn))
 
         // Static methods: Int.random(in:), Double.random(in:), Bool.random()
-        let intRandomFn = NativeFunctionRef(name: "Int.random", arity: 1) { args in
-            guard case .range(let lo, let hi, let inclusive) = args.first else { return .nil_ }
-            let upper = inclusive ? hi : hi - 1
-            guard lo <= upper else { return .nil_ }
-            return .int(Int.random(in: lo...upper))
+        // Also: Int.random() (no args) → random Int, Double.random() → random 0.0..<1.0
+        let intRandomFn = NativeFunctionRef(name: "Int.random", arity: -1) { args in
+            if let range = args.first, case .range(let lo, let hi, let inclusive) = range {
+                let upper = inclusive ? hi : hi - 1
+                guard lo <= upper else { return .nil_ }
+                return .int(Int.random(in: lo...upper))
+            }
+            // No args: random Int in 0...999
+            return .int(Int.random(in: 0...999))
         }
         vm.environment.setGlobal("Int.random", value: .nativeFunction(intRandomFn))
 
-        let doubleRandomFn = NativeFunctionRef(name: "Double.random", arity: 1) { args in
-            guard case .range(let lo, let hi, _) = args.first else { return .nil_ }
-            return .double(Double.random(in: Double(lo)...Double(hi)))
+        let doubleRandomFn = NativeFunctionRef(name: "Double.random", arity: -1) { args in
+            if let range = args.first, case .range(let lo, let hi, _) = range {
+                return .double(Double.random(in: Double(lo)...Double(hi)))
+            }
+            // No args: random Double in 0.0..<1.0
+            return .double(Double.random(in: 0.0..<1.0))
         }
         vm.environment.setGlobal("Double.random", value: .nativeFunction(doubleRandomFn))
 

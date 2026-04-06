@@ -186,13 +186,27 @@ extension BytecodeCompiler {
     func resolveImplicitMember(_ name: String) -> String? {
         for typeName in externalGlobals {
             let qualified = "\(typeName).\(name)"
-            // Check if this qualified name is registered (it will be in the VM environment)
-            // We can't check the VM from the compiler, but we can check externalStaticMembers
             if externalStaticMembers.contains(qualified) {
                 return qualified
             }
         }
         return nil
+    }
+
+    /// Resolve an implicit member function call (e.g. `.random()`) to a qualified
+    /// static method like "Int.random" or "Bool.random". Checks known static methods.
+    func resolveImplicitMemberCall(_ name: String) -> String? {
+        // Check core types for static methods
+        for typeName in ["Int", "Double", "Bool", "Array"] {
+            let qualified = "\(typeName).\(name)"
+            if symbolTable.lookup(typeName)?.isType == true {
+                // Type is registered — check if the qualified name might exist as a global
+                // We can't verify at compile time, but these are well-known static methods
+                if ["random"].contains(name) { return qualified }
+            }
+        }
+        // Also check external static members
+        return resolveImplicitMember(name)
     }
 
     func compileIdentifier(_ ident: IdentifierNode) {
@@ -358,6 +372,13 @@ extension BytecodeCompiler {
                       case .enumCase(let typeName) = symbolTable.lookup(memberAccess.member)?.kind {
                 // Implicit member call like `.loaded(42)` — enum constructor
                 let qualifiedName = "\(typeName).\(memberAccess.member)"
+                let nameIndex = chunk.constantPool.addString(qualifiedName)
+                Instruction.loadGlobal(nameIndex, into: &chunk)
+                for arg in call.arguments { compileExpression(arg.value) }
+                Instruction.call(argCount: UInt8(call.arguments.count), into: &chunk)
+            } else if memberAccess.object is SelfNode,
+                      let qualifiedName = resolveImplicitMemberCall(memberAccess.member) {
+                // Implicit static method call like `.random()` → Int.random()
                 let nameIndex = chunk.constantPool.addString(qualifiedName)
                 Instruction.loadGlobal(nameIndex, into: &chunk)
                 for arg in call.arguments { compileExpression(arg.value) }
