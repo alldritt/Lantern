@@ -363,14 +363,15 @@ extension BytecodeCompiler {
                 for arg in call.arguments { compileExpression(arg.value) }
                 Instruction.call(argCount: UInt8(call.arguments.count), into: &chunk)
             } else {
-                // Validate implicit self.method() calls
+                // Validate implicit self.method() calls — warning only for method calls
+                // since they may resolve at runtime via bridge dispatch or extension methods
                 if memberAccess.object is SelfNode && compilingMethodOfType != nil
                     && !currentTypePropertyNames.isEmpty
                     && !currentTypePropertyNames.contains(memberAccess.member)
                     && !currentTypeMethodNames.contains(memberAccess.member)
                     && symbolTable.lookup(memberAccess.member) == nil
                     && !isKnownGlobal(memberAccess.member) {
-                    diagnosticEngine.error("Value of type '\(compilingMethodOfType!)' has no member '\(memberAccess.member)'", at: call.location)
+                    diagnosticEngine.warning("Value of type '\(compilingMethodOfType!)' has no member '\(memberAccess.member)'", at: call.location)
                 }
                 compileExpression(memberAccess.object)
                 for arg in call.arguments { compileExpression(arg.value) }

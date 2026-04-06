@@ -147,8 +147,8 @@ struct Baz {
 // END
 
 // TEST: implicit_member_method_in_closure
-// EXPECT: ERROR
-struct V: View {
+// EXPECT: COMPILES
+struct V2: View {
     @State var count = 0
     var body: some View {
         Button("tap") { count = .random() }
