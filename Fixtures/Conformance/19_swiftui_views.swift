@@ -256,3 +256,44 @@ Text("Hi").background(.green).foregroundColor(.white)
 // EXPECT: VIEW
 Text("Hi").tint(.orange)
 // END
+
+// === Geometric Shapes ===
+
+// TEST: circle_shape
+// EXPECT: VIEW
+Circle()
+// END
+
+// TEST: rectangle_shape
+// EXPECT: VIEW
+Rectangle()
+// END
+
+// TEST: rounded_rectangle_shape
+// EXPECT: VIEW
+RoundedRectangle(20)
+// END
+
+// TEST: capsule_shape
+// EXPECT: VIEW
+Capsule()
+// END
+
+// TEST: ellipse_shape
+// EXPECT: VIEW
+Ellipse()
+// END
+
+// TEST: circle_with_fill
+// EXPECT: VIEW
+Circle().fill(.red)
+// END
+
+// TEST: shapes_in_vstack
+// EXPECT: VIEW
+VStack {
+    Circle().fill(.blue)
+    Rectangle().fill(.green)
+    Capsule().fill(.orange)
+}
+// END

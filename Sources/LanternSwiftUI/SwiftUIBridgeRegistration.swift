@@ -89,6 +89,57 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
         return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "LabeledContent"))
     }
 
+    // MARK: - Geometric Shapes
+
+    registry.registerType("Circle") { _ in
+        boxView(AnyView(Circle()), typeName: "Circle")
+    }
+
+    registry.registerType("Rectangle") { _ in
+        boxView(AnyView(Rectangle()), typeName: "Rectangle")
+    }
+
+    registry.registerType("RoundedRectangle") { args in
+        let radius = args.first?.doubleValue ?? 10
+        return boxView(AnyView(RoundedRectangle(cornerRadius: CGFloat(radius))), typeName: "RoundedRectangle")
+    }
+
+    registry.registerType("Capsule") { _ in
+        boxView(AnyView(Capsule()), typeName: "Capsule")
+    }
+
+    registry.registerType("Ellipse") { _ in
+        boxView(AnyView(Ellipse()), typeName: "Ellipse")
+    }
+
+    registry.registerType("UnevenRoundedRectangle") { args in
+        let tl = args.count > 0 ? args[0].doubleValue ?? 0 : 0
+        let tr = args.count > 1 ? args[1].doubleValue ?? 0 : 0
+        let br = args.count > 2 ? args[2].doubleValue ?? 0 : 0
+        let bl = args.count > 3 ? args[3].doubleValue ?? 0 : 0
+        let view = UnevenRoundedRectangle(topLeadingRadius: tl, bottomLeadingRadius: bl,
+                                           bottomTrailingRadius: br, topTrailingRadius: tr)
+        return boxView(AnyView(view), typeName: "UnevenRoundedRectangle")
+    }
+
+    // Shape modifiers — .fill and .stroke
+    registry.registerMethod(typeName: "View", selector: "fill", parameterLabels: []) { receiver, args in
+        guard let (ref, box) = unboxView(receiver) else { return receiver }
+        if let arg = args.first, let color = ModifierApplicator.colorFromValue(arg) {
+            return boxView(AnyView(box.view.foregroundStyle(color)), typeName: ref.typeName)
+        }
+        return receiver
+    }
+
+    registry.registerMethod(typeName: "View", selector: "stroke", parameterLabels: []) { receiver, args in
+        guard let (ref, _) = unboxView(receiver) else { return receiver }
+        let color = args.first.flatMap { ModifierApplicator.colorFromValue($0) } ?? .primary
+        let lineWidth = args.count > 1 ? args[1].doubleValue ?? 1 : 1
+        // Stroke is shape-specific; approximate with overlay + border
+        let view = AnyView(Circle().stroke(color, lineWidth: CGFloat(lineWidth)))
+        return boxView(AnyView(view), typeName: ref.typeName)
+    }
+
     // MARK: - Binding-Aware Views
 
     registerBindingViews(on: registry)
