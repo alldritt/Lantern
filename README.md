@@ -342,12 +342,20 @@ public final class Interpreter {
         program: CompiledProgram
     ) -> Result<Value, InterpreterError>
 
+    /// Execute a program, pausing at the first executable statement.
+    public func executePaused(
+        program: CompiledProgram
+    ) -> Result<Value, InterpreterError>
+
     /// Execute a single expression and return its value.
     /// Useful for REPL-style evaluation.
     public func evaluate(
         expression: String,
         fileName: String = "<expr>"
     ) -> Result<Value, InterpreterError>
+
+    /// Wrap a View-conforming instance in ViewBox for live preview.
+    public func wrapViewInstanceIfNeeded(_ value: Value) -> Value
 
     /// The output handler for print() and debugPrint() calls.
     /// Defaults to stdout.
@@ -641,6 +649,7 @@ public enum ErrorKind {
 public protocol DebuggerInterface: AnyObject {
     // Execution control
     func run()
+    func startPaused()
     func pause()
     func stepOver()
     func stepInto()
@@ -660,6 +669,7 @@ public protocol DebuggerInterface: AnyObject {
     var breakpoints: [Breakpoint] { get }
 
     // Inspection
+    var lastExpressionResult: Value? { get }
     func callStack() -> [FrameInfo]
     func locals(frameIndex: Int) -> [VariableInfo]
     func captures(frameIndex: Int) -> [VariableInfo]
@@ -686,6 +696,7 @@ public protocol DebuggerDelegate: AnyObject {
     func debuggerDidEncounterError(_ error: InterpreterError)
     func debuggerDidProduceOutput(_ text: String)
     func debuggerDidLogEvent(_ event: DebugEvent)
+    func debuggerDidComplete(result: Value?)
 }
 ```
 
@@ -853,8 +864,8 @@ public enum BridgeError: Error, CustomStringConvertible {
 
 ```swift
 public struct ViewStub: View {
-    public init(interpreter: Interpreter, instance: InstanceRef)
-    public var stateStore: LanternStateStore { get }
+    public init(vm: VM, instance: InstanceRef, stateStore: LanternStateStore, appStorageKeys: [String: String])
+    public var lastDescriptor: ViewDescriptor? { get }
     public var body: some View { get }
 }
 ```
@@ -927,10 +938,10 @@ public final class ViewCollector {
 
 ```swift
 extension Interpreter {
-    public func evaluateViewBody(of instance: InstanceRef, stateStore: LanternStateStore) -> AnyView
-    public var currentViewDescriptor: ViewDescriptor? { get }
+    public func createInstance(typeName: String, arguments: [Value]) -> InstanceRef?
     public func makeView(from instance: InstanceRef) -> ViewStub
-    public func createBinding<T: BridgeConvertible>(stateStore: LanternStateStore, key: String, type: T.Type) -> Binding<T>
+    public func wrapViewInstanceIfNeeded(_ value: Value) -> Value
+    public var currentViewDescriptor: ViewDescriptor? { get }
 }
 ```
 
@@ -938,18 +949,32 @@ extension Interpreter {
 
 ## Conformance Testing
 
-The `Fixtures/Conformance/` directory contains 351 test cases across 15 fixture files. Each test specifies Swift source and expected output, validated against both the real Swift compiler and the Lantern interpreter.
+The `Fixtures/Conformance/` directory contains 460+ test cases across 20 fixture files covering arithmetic, strings, control flow, functions, closures, arrays, dictionaries, optionals, structs, classes, enums, protocols, error handling, higher-order functions, complex programs, let assignment, negative tests, compile errors, SwiftUI views, and core type methods.
 
-Validate fixtures against the Swift compiler:
+Each test specifies Swift source and expected output, validated against both the real Swift compiler and the Lantern interpreter. The test format supports:
+
+- `// EXPECT: output` — exact output match
+- `// EXPECT: ERROR` — any compile or runtime error expected
+- `// EXPECT: ERROR@3` — error expected at specific line
+- `// EXPECT: VIEW` — ViewBox result (SwiftUI)
+- `// EXPECT: COMPILES` — no errors, no output check
+
+### Swift Oracle
+
+Compare Lantern output against the real Swift compiler for every test:
 
 ```
-swift Fixtures/Conformance/conformance_runner.swift Fixtures/Conformance/
+swift run lantern-conformance Fixtures/Conformance/
 ```
 
-Run conformance tests through the interpreter:
+Reports: `MATCH`, `MISMATCH`, `SWIFT_ONLY_ERROR` (too permissive), `LANTERN_ONLY_ERROR` (bug).
+
+### Run Tests
 
 ```
-swift test --filter ConformanceTests
+swift test --filter Conformance       # all fixtures as individual @Test cases
+swift test --filter runAllConformance # summary report
+swift test                            # full 570+ test suite
 ```
 
 ## AST Optimizer
@@ -1064,7 +1089,7 @@ struct ContentView: View {
 
 ### @State and Reactivity
 
-When the compiler detects `@State` properties in a View struct, it emits `stateGet` and `stateSet` opcodes instead of normal property access. At runtime, these read and write through a `LanternStateStore` — an `ObservableObject` owned by the `ViewStub`'s `@StateObject`. When a `@State` value changes, SwiftUI's observation system triggers a re-render automatically.
+When the compiler detects `@State` properties in a View struct, it emits `stateGet` and `stateSet` opcodes instead of normal property access. At runtime, these read and write through a `LanternStateStore` owned by the `Interpreter` (keyed by instance identity, so it survives view recreation). A `StateObserver` bridges store changes to SwiftUI's observation system.
 
 ```swift
 let source = """
@@ -1074,10 +1099,12 @@ struct CounterView: View {
     var body: some View {
         VStack(spacing: 20) {
             Text("Count: \\(count)")
+                .font(.largeTitle)
             Button("Increment") {
-                count += 1
+                count = count + 1
             }
         }
+        .padding()
     }
 }
 """
@@ -1085,47 +1112,79 @@ struct CounterView: View {
 
 The flow for a button tap:
 1. SwiftUI calls the native closure registered by the Button bridge
-2. The closure calls `vm.invokeValue(actionClosure, args: [])`
-3. The closure body executes `count += 1`, which emits `stateSet`
+2. The closure restores the captured `SwiftUIContext` and calls `vm.invokeValue(actionClosure, args: [])`
+3. The closure body executes `count = count + 1` — `stateGet` reads current value, `stateSet` writes new value
 4. `stateSet` writes to `LanternStateStore.values["count"]`
-5. `LanternStateStore` is an `ObservableObject` — `@Published` fires `objectWillChange`
+5. `@Published` fires `objectWillChange`, which the `StateObserver` forwards to SwiftUI
 6. SwiftUI re-evaluates `ViewStub.body`, which re-invokes the interpreted `body` getter
 7. The new `count` value is read via `stateGet`, producing updated `Text`
+
+The same context capture mechanism works for `onAppear`, `onTapGesture`, and all lifecycle closures.
 
 ### Supported View Types
 
 | Type | Constructor | Notes |
 |------|------------|-------|
-| `Text` | `Text("string")` | String argument |
+| `Text` | `Text("string")` | String interpolation with `specifier:` format support |
 | `Button` | `Button("title") { action }` | Title + closure, or two closures (action + label) |
-| `VStack` | `VStack { ... }` | Optional spacing argument |
-| `HStack` | `HStack { ... }` | Optional spacing argument |
+| `VStack` | `VStack { ... }` | Optional `spacing:` argument |
+| `HStack` | `HStack { ... }` | Optional `spacing:` argument |
 | `ZStack` | `ZStack { ... }` | |
-| `Spacer` | `Spacer()` | Optional minLength |
-| `Divider` | `Divider()` | |
-| `Image` | `Image(systemName: "star")` | SF Symbols |
-| `Label` | `Label("title", systemImage: "star")` | |
-| `ProgressView` | `ProgressView()` | Optional value |
-| `Color` | `Color.red` / `Color(r, g, b)` | Named colors + RGB |
 | `ScrollView` | `ScrollView { ... }` | |
 | `List` | `List { ... }` | |
 | `NavigationStack` | `NavigationStack { ... }` | |
+| `Form` | `Form { ... }` | |
+| `Section` | `Section("header") { ... }` | |
+| `Group` | `Group { ... }` | |
+| `ForEach` | `ForEach(array) { item in ... }` | |
+| `NavigationLink` | `NavigationLink("title") { ... }` | |
+| `TabView` | `TabView { ... }` | |
+| `Menu` | `Menu("title") { ... }` | |
+| `Grid` | `Grid { ... }` | |
+| `GeometryReader` | `GeometryReader { proxy in ... }` | |
+| `Spacer` | `Spacer()` | |
+| `Divider` | `Divider()` | |
+| `Image` | `Image("star.fill")` | SF Symbols with `.resizable()`, `.scaledToFit()`, `.imageScale()` |
+| `Label` | `Label("title", "star")` | Title + system image |
+| `ProgressView` | `ProgressView()` | Optional value |
+| `Color` | `Color.red` / `Color(r, g, b)` | Named colors + RGB |
+| `Toggle` | `Toggle("label", $binding)` | |
+| `TextField` | `TextField("placeholder", $binding)` | |
+| `TextEditor` | `TextEditor($binding)` | |
+| `Slider` | `Slider($binding)` | |
+| `Picker` | `Picker("label")` | |
+| `DatePicker` | `DatePicker("label")` | |
+| `Stepper` | `Stepper("label")` | |
+| `Link` | `Link("title", "url")` | |
+| `Circle` | `Circle()` | `.fill(.red)`, `.stroke(.blue, 2)` |
+| `Rectangle` | `Rectangle()` | `.fill(.green)` |
+| `RoundedRectangle` | `RoundedRectangle(12)` | Corner radius argument |
+| `Capsule` | `Capsule()` | |
+| `Ellipse` | `Ellipse()` | |
 
 ### Supported Modifiers
 
-Applied via the `ModifierApplicator` through bridge method dispatch:
+All modifiers accept Swift-idiomatic enum syntax (`.red`, `.title`, `.center`) as well as string arguments for backward compatibility.
 
-**Layout:** `.padding()`, `.frame(width:height:)`, `.offset(x:y:)`, `.fixedSize()`
+**Layout:** `.padding()`, `.padding(.top, 10)`, `.padding(.horizontal)`, `.frame(width:height:)`, `.offset(x, y)`, `.position(x, y)`, `.fixedSize()`, `.ignoresSafeArea()`, `.zIndex(n)`
 
-**Typography:** `.font(.title)`, `.bold()`, `.italic()`, `.underline()`, `.lineLimit(n)`
+**Typography:** `.font(.title)`, `.fontWeight(.bold)`, `.fontDesign(.rounded)`, `.monospaced()`, `.bold()`, `.italic()`, `.underline()`, `.strikethrough()`, `.kerning(n)`, `.tracking(n)`, `.baselineOffset(n)`, `.lineLimit(n)`, `.lineSpacing(n)`, `.multilineTextAlignment(.center)`, `.textCase(.uppercase)`, `.minimumScaleFactor(n)`, `.truncationMode(.tail)`
 
-**Appearance:** `.foregroundColor(.red)`, `.foregroundStyle(.blue)`, `.background(.green)`, `.opacity(0.5)`, `.cornerRadius(10)`, `.shadow(radius: 5)`, `.border(.black, width: 1)`
+**Appearance:** `.foregroundColor(.red)`, `.foregroundStyle(.blue)`, `.background(.green)`, `.overlay(.red)` (color or view), `.opacity(0.5)`, `.cornerRadius(10)`, `.shadow(radius: 5)`, `.border(.black, 1)`, `.hidden()`, `.blur(radius: 5)`, `.clipShape(.circle)`, `.tint(.orange)`, `.fill(.red)`, `.stroke(.blue, 2)`
+
+**Image:** `.resizable()`, `.scaledToFit()`, `.scaledToFill()`, `.aspectRatio(.fit)`, `.imageScale(.large)`, `.renderingMode(.template)`, `.symbolRenderingMode(.multicolor)`
 
 **Transforms:** `.rotationEffect(degrees)`, `.scaleEffect(scale)`
 
-**Visibility:** `.hidden()`, `.disabled(true)`
+**Interaction:** `.disabled(true)`, `.allowsHitTesting(false)`, `.contentShape()`
 
 **Navigation:** `.navigationTitle("Title")`
+
+**Styling:** `.listStyle(.plain)`
+
+**Lifecycle:** `.onAppear { }`, `.onDisappear { }`, `.onTapGesture { }`, `.onChange { }`, `.task { }`
+
+**Animation:** `.animation(.easeIn)`, `.transition(.slide)`, `.contentTransition(.opacity)`, `.symbolEffect(.bounce)`
 
 ### Architecture
 
@@ -1139,38 +1198,41 @@ The bridge uses three layers:
 
 ### Limitations
 
-- **No generics** — `ForEach`, `Picker(selection:)`, and other generic views are not yet supported
-- **No `$binding` syntax** — `Toggle(isOn: $flag)` requires explicit binding creation (not yet implemented)
-- **No `@Binding`/`@ObservedObject`/`@EnvironmentObject`** — only `@State` is functional
-- **No `sheet`/`alert`/`fullScreenCover`** — presentation modifiers need binding support
-- **No `onAppear`/`onChange`/`task`** — lifecycle modifiers need closure wrapping integration
-- **No conditional views** — `if`/`else` in view builders doesn't yet produce conditional SwiftUI content
+- **No generics** — `Picker(selection:)` and other generic views have simplified signatures
+- **Limited `@Binding`** — `$property` syntax works for `@State` in View bodies; `@ObservedObject`/`@EnvironmentObject` have basic support
+- **No `sheet`/`alert`/`fullScreenCover`** — presentation modifiers not yet implemented
+- **No `@ViewBuilder` conditionals** — `if`/`else` in view builders doesn't yet produce conditional SwiftUI content (works in closures via runtime branching)
+- **`.resizable()` limitation** — Image-specific modifiers that require `Image` type (not `AnyView`) have reduced effect due to type erasure
 - **View descriptor tree** — `currentViewDescriptor` is not yet populated during evaluation
 
 ## Project Status
 
-**Conformance: 349/355 tests passing (98.3%)** — 12 of 16 fixture files at 100%.
+**Conformance: 455/460 tests passing (98.9%)** — 18 of 20 fixture files at 100%. Validated against the real Swift compiler via the oracle tool.
+
+**Test suite: 572 tests** across 68 suites — conformance fixtures, SwiftUI runtime tests, closure state mutations, debugger tests, syntax error detection.
 
 The interpreter handles:
 
 - Arithmetic, comparison, logical, bitwise, and string operators with correct precedence
 - `let`/`var` declarations (including deferred init), `if`/`else`/`guard`, `while`/`while let`, `for-in` (ranges, arrays, dictionaries)
 - Functions with recursion, default parameters, closures with `$0` shorthand, capture lists (`[x]`), and mutable capture sharing
-- Arrays with `map`, `filter`, `reduce`, `flatMap`, `compactMap`, `sorted` (with custom comparator and user-defined `<`), `contains`, `enumerated`, `prefix`, `suffix`, `allSatisfy`, mutation
-- Dictionaries with subscript read/write, default subscript (`dict[key, default: 0]`), iteration, `sorted`, `compactMapValues`
-- Optionals with `if let`, `guard let`, `while let`, nil coalescing (`??`), optional chaining, `map`/`flatMap`, pattern matching (`.some`/`.none`)
-- Structs with memberwise init, custom init, methods, computed properties (get/set), static members, value semantics
-- Classes with custom init, methods, computed properties, reference semantics, static members, identity operators (`===`/`!==`)
-- Enums with switch matching (including range patterns, where clauses, tuple patterns, associated value destructuring), raw values (Int/String), computed properties, methods
-- Protocols with conformance, protocol extension default methods, extensions on built-in types
+- Arrays with `map`, `filter`, `reduce`, `flatMap`, `compactMap`, `sorted`, `contains`, `enumerated`, `prefix`, `suffix`, `allSatisfy`, `insert`, `removeAll`, `shuffle`, `randomElement`, `firstIndex`, `swapAt`
+- Dictionaries with subscript read/write, default subscript, iteration, `sorted`, `compactMapValues`, `mapValues`, `filter`, `merge`, `removeAll`, `forEach`
+- Optionals with `if let`, `guard let`, `while let`, nil coalescing (`??`), optional chaining, `map`/`flatMap`, pattern matching
+- Structs with memberwise init, custom init, methods, computed properties (get/set), static members, value semantics; compile-time detection of undefined property access
+- Classes with custom init, methods, computed properties, reference semantics, static members
+- Enums with switch matching (range patterns, where clauses, tuple patterns, associated value destructuring), raw values (Int/String), computed properties, methods
+- Protocols with conformance, protocol extension default methods, extensions on built-in types (Int, String, etc.)
 - Error handling with `do`/`try`/`catch`, `throw`, `try?`/`try!`, `defer` (LIFO ordering)
 - Higher-order functions: `map`, `filter`, `reduce`, `zip`, operator function references (`+`, `*`)
-- Tuple expressions, destructuring in `let`/`for-in`, implicit member access (`.loading`, `.success(42)`)
-- String interpolation, escape sequences, `CustomStringConvertible`
-- `print()`, `String()`, `Int()`, `Double()`, `abs()`, `min()`, `max()`, `Array()`, `zip()`, `Result`
+- Tuple expressions, destructuring in `let`/`for-in`, implicit member access (`.title`, `.red`, `.easeIn`)
+- String interpolation with format specifiers: `"\(value, specifier: "%.2f")"`, escape sequences, `CustomStringConvertible`
+- Core type methods: `Int.random(in:)`, `Double.pi`, `Bool.random()`, `isMultiple(of:)`, `rounded()`, `squareRoot()`, `isNaN`/`isInfinite`/`isZero`
+- `print()`, `String()`, `Int()`, `Double()`, `abs()`, `min()`, `max()`, `Array()`, `zip()`, `type(of:)`, `Result`
 - Int-to-Double parameter coercion, generic specialization stripping (`Stack<Int>` works)
+- Comprehensive syntax error detection via SwiftSyntax's ParseDiagnosticsGenerator
 
-Remaining: 3 performance timeouts (fibonacci, custom_higher_order, stack_implementation), nested subscript mutation (`result[col].append(val)`), static property self-reference, optional assignment wrapping.
+Remaining known issues: 5 tests (optional output format, struct static property overflow, execution limit on complex programs, nested array mutation, use-before-init detection).
 
 ## License
 
