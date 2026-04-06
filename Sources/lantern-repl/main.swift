@@ -25,7 +25,7 @@ while true {
     switch result {
     case .success(let value):
         if value != .void {
-            print("= \(value.debugSummary)")
+            print("= \(value.description)")
         }
     case .failure(let error):
         print("Error: \(error)")
