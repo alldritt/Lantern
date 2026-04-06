@@ -143,7 +143,7 @@ public func registerSwiftUIBridge(on registry: BridgeRegistry, vm: VM? = nil) {
 
     // MARK: - Binding-Aware Views
 
-    registerBindingViews(on: registry)
+    registerBindingViews(on: registry, vm: vm)
 
     // MARK: - Container + Interactive Views (need VM)
 
@@ -263,8 +263,8 @@ private func registerLifecycleModifiers(on registry: BridgeRegistry, vm: VM) {
 
 // MARK: - Binding-Aware Views
 
-private func registerBindingViews(on registry: BridgeRegistry) {
-    registry.registerType("Toggle") { args in
+private func registerBindingViews(on registry: BridgeRegistry, vm: VM?) {
+    registry.registerType("Toggle") { [weak vm] args in
         // Toggle("Label", isOn: $binding)
         let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
         // Find the binding argument
@@ -274,12 +274,12 @@ private func registerBindingViews(on registry: BridgeRegistry) {
                 get: { bindingRef.stateStore.get(bindingRef.key).boolValue ?? false },
                 set: { bindingRef.stateStore.set(bindingRef.key, .bool($0)) }
             )
-            return .hostObject(HostObjectRef(object: ViewBox(AnyView(Toggle(title, isOn: binding))), typeName: "Toggle"))
+            return boxView(AnyView(Toggle(title, isOn: binding)), typeName: "Toggle", properties: ["title": .string(title)], vm: vm)
         }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Toggle(title, isOn: .constant(false)))), typeName: "Toggle"))
+        return boxView(AnyView(Toggle(title, isOn: .constant(false))), typeName: "Toggle", properties: ["title": .string(title)], vm: vm)
     }
 
-    registry.registerType("TextField") { args in
+    registry.registerType("TextField") { [weak vm] args in
         // TextField("Placeholder", text: $binding)
         let title = args.first?.stringValue ?? ""
         if args.count >= 2, let bindingRef = extractBindingRef(args[1]) {
@@ -287,23 +287,23 @@ private func registerBindingViews(on registry: BridgeRegistry) {
                 get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
                 set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
             )
-            return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextField(title, text: binding))), typeName: "TextField"))
+            return boxView(AnyView(TextField(title, text: binding)), typeName: "TextField", properties: ["title": .string(title)], vm: vm)
         }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextField(title, text: .constant("")))), typeName: "TextField"))
+        return boxView(AnyView(TextField(title, text: .constant(""))), typeName: "TextField", properties: ["title": .string(title)], vm: vm)
     }
 
-    registry.registerType("TextEditor") { args in
+    registry.registerType("TextEditor") { [weak vm] args in
         if let bindingRef = extractBindingRef(args.first ?? .nil_) {
             let binding = Binding<String>(
                 get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
                 set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
             )
-            return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextEditor(text: binding))), typeName: "TextEditor"))
+            return boxView(AnyView(TextEditor(text: binding)), typeName: "TextEditor", vm: vm)
         }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(TextEditor(text: .constant("")))), typeName: "TextEditor"))
+        return boxView(AnyView(TextEditor(text: .constant(""))), typeName: "TextEditor", vm: vm)
     }
 
-    registry.registerType("Slider") { args in
+    registry.registerType("Slider") { [weak vm] args in
         // Slider(value: $binding, in: 0...100)
         if let bindingRef = extractBindingRef(args.first ?? .nil_) {
             let binding = Binding<Double>(
@@ -316,52 +316,48 @@ private func registerBindingViews(on registry: BridgeRegistry) {
             } else {
                 range = 0...1
             }
-            return .hostObject(HostObjectRef(object: ViewBox(AnyView(Slider(value: binding, in: range))), typeName: "Slider"))
+            return boxView(AnyView(Slider(value: binding, in: range)), typeName: "Slider", vm: vm)
         }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(Slider(value: .constant(0.5)))), typeName: "Slider"))
+        return boxView(AnyView(Slider(value: .constant(0.5))), typeName: "Slider", vm: vm)
     }
 
     // Picker(title, selection: $binding) { options }
-    registry.registerType("Picker") { args in
+    registry.registerType("Picker") { [weak vm] args in
         let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
         if let bindingRef = args.compactMap({ extractBindingRef($0) }).first {
             let binding = Binding<String>(
                 get: { bindingRef.stateStore.get(bindingRef.key).stringValue ?? "" },
                 set: { bindingRef.stateStore.set(bindingRef.key, .string($0)) }
             )
-            return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+            return boxView(AnyView(
                 Picker(title, selection: binding) { Text("Option").tag("option") }
-            )), typeName: "Picker"))
+            ), typeName: "Picker", properties: ["title": .string(title)], vm: vm)
         }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+        return boxView(AnyView(
             Picker(title, selection: .constant("")) { EmptyView() }
-        )), typeName: "Picker"))
+        ), typeName: "Picker", properties: ["title": .string(title)], vm: vm)
     }
 
     // DatePicker(title, selection: $binding)
-    registry.registerType("DatePicker") { args in
+    registry.registerType("DatePicker") { [weak vm] args in
         let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
         // DatePicker requires a Date binding — simplified for prototyping
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(
+        return boxView(AnyView(
             DatePicker(title, selection: .constant(Foundation.Date()))
-        )), typeName: "DatePicker"))
+        ), typeName: "DatePicker", properties: ["title": .string(title)], vm: vm)
     }
 
     // Stepper(title, value: $binding, in: range)
-    registry.registerType("Stepper") { args in
+    registry.registerType("Stepper") { [weak vm] args in
         let title = args.first(where: { $0.stringValue != nil })?.stringValue ?? ""
         if let bindingRef = args.compactMap({ extractBindingRef($0) }).first {
             let binding = Binding<Int>(
                 get: { bindingRef.stateStore.get(bindingRef.key).intValue ?? 0 },
                 set: { bindingRef.stateStore.set(bindingRef.key, .int($0)) }
             )
-            return .hostObject(HostObjectRef(object: ViewBox(AnyView(
-                Stepper(title, value: binding)
-            )), typeName: "Stepper"))
+            return boxView(AnyView(Stepper(title, value: binding)), typeName: "Stepper", properties: ["title": .string(title)], vm: vm)
         }
-        return .hostObject(HostObjectRef(object: ViewBox(AnyView(
-            Stepper(title, value: .constant(0))
-        )), typeName: "Stepper"))
+        return boxView(AnyView(Stepper(title, value: .constant(0))), typeName: "Stepper", properties: ["title": .string(title)], vm: vm)
     }
 }
 
@@ -507,7 +503,7 @@ private func registerButton(on registry: BridgeRegistry, vm: VM) {
             view = AnyView(Button("", action: action))
         }
 
-        return .hostObject(HostObjectRef(object: ViewBox(view), typeName: "Button"))
+        return boxView(view, typeName: "Button", properties: title.map { ["title": .string($0)] } ?? [:], vm: vm)
     }
 }
 

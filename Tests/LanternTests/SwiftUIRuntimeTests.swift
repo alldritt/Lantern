@@ -1117,6 +1117,30 @@ struct ViewHierarchyDescriptorTests {
         #expect(desc?.children[1].properties["cornerRadius"] == .double(16))
     }
 
+    @Test func nestedContainerChildrenRecorded() throws {
+        let h = try ViewTestHarness(source: """
+        struct V: View {
+            var body: some View {
+                VStack {
+                    Text("Title")
+                    HStack {
+                        Button("A") { }
+                        Button("B") { }
+                        Button("C") { }
+                    }
+                }
+            }
+        }
+        """)
+        _ = try h.invokeBody(typeName: "V")
+        let desc = (h.ctx.descriptorBuilder as? ViewDescriptorBuilder)?.rootDescriptor
+        #expect(desc?.typeName == "VStack")
+        #expect(desc?.children.count == 2, "VStack should have Text + HStack")
+        let hstack = desc?.children[1]
+        #expect(hstack?.typeName == "HStack")
+        #expect(hstack?.children.count == 3, "HStack should have 3 Button children, got \(hstack?.children.count ?? 0)")
+    }
+
     @Test func descriptorAvailableOnInterpreter() {
         let interp = Interpreter()
         let result = interp.run(source: """
