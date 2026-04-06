@@ -6,6 +6,9 @@ public final class ViewDescriptorBuilder: DescriptorBuilderProtocol, @unchecked 
     private var stack: [(typeName: String, properties: [String: Value], modifiers: [ModifierDescriptor], location: SourceLocation)] = []
     private var childrenStack: [[ViewDescriptor]] = [[]]
 
+    /// Called after the view tree is fully built (after the root endView).
+    public var onTreeBuilt: ((ViewDescriptor?) -> Void)?
+
     public init() {}
 
     public func beginView(typeName: String, properties: [String: Value], location: SourceLocation) {

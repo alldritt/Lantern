@@ -494,6 +494,10 @@ public final class Interpreter {
         }
         let builder = ViewDescriptorBuilder()
         lastViewDescriptorBuilder = builder
+        // Forward descriptor updates to consumers
+        builder.onTreeBuilt = { [weak self] descriptor in
+            self?.onViewDescriptorUpdated?(descriptor)
+        }
         return ViewStub(vm: vm, instance: instance, stateStore: store,
                          descriptorBuilder: builder,
                          appStorageKeys: compiler.allAppStorageMappings[instance.typeName] ?? [:])
@@ -505,6 +509,10 @@ public final class Interpreter {
     public var currentViewDescriptor: ViewDescriptor? {
         lastViewDescriptorBuilder?.rootDescriptor
     }
+
+    /// Called by ViewStub after each body evaluation to notify that
+    /// the descriptor tree has been updated. Set by LanternKit's SessionController.
+    public var onViewDescriptorUpdated: ((ViewDescriptor?) -> Void)?
 
     /// Retained reference to the last descriptor builder used during view rendering.
     var lastViewDescriptorBuilder: ViewDescriptorBuilder?

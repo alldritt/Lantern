@@ -71,6 +71,8 @@ public struct ViewStub: View {
 
         do {
             let result = try vm.invokeValue(getter, args: [.instance(instance)])
+            // Notify that the descriptor tree is now populated
+            descriptorBuilder.onTreeBuilt?(descriptorBuilder.rootDescriptor)
             return ViewFactory.viewFromValue(result)
         } catch {
             return AnyView(Text("Error: \(error)"))
