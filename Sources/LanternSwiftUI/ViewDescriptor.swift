@@ -36,6 +36,20 @@ public struct ViewDescriptor: Sendable {
         }
         return nil
     }
+
+    /// Debug dump of the tree for diagnostics.
+    public func debugDump(indent: Int = 0) -> String {
+        let pad = String(repeating: "  ", count: indent)
+        var result = "\(pad)\(typeName)"
+        if !modifiers.isEmpty {
+            result += " [\(modifiers.map(\.name).joined(separator: ", "))]"
+        }
+        result += " (\(children.count) children)\n"
+        for child in children {
+            result += child.debugDump(indent: indent + 1)
+        }
+        return result
+    }
 }
 
 /// Describes a modifier applied to a view.
