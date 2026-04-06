@@ -1278,6 +1278,12 @@ The interpreter handles:
 
 Remaining known issues: 5 tests (optional output format, struct static property overflow, execution limit on complex programs, nested array mutation, use-before-init detection).
 
+## Related Projects
+
+- **[LanternKit](https://github.com/alldritt/LanternKit)** — A library of SwiftUI views and controllers for building Lantern development tools. Provides a source editor, console, live SwiftUI preview, debug panels, and a Code Bubbles-style visual debugger as independent, composable components.
+
+- **[Wick](https://github.com/alldritt/Wick)** — A Swift playground IDE built on Lantern and LanternKit. Write, run, and debug Lantern scripts with live SwiftUI preview, breakpoints, stepping, and variable inspection.
+
 ## License
 
 MIT
