@@ -1,5 +1,6 @@
 #if canImport(SwiftUI)
 import SwiftUI
+import LanternVM
 
 /// Centralized mappings from string names to SwiftUI values.
 /// Used by both bridge registration (enum static properties) and
@@ -46,6 +47,78 @@ public enum SwiftUIConstants {
 
     // MARK: - Enum-Like Types for Bridge Registration
 
+    // MARK: - Animations
+
+    public static let animationNames = [
+        "default", "easeIn", "easeOut", "easeInOut", "linear",
+        "spring", "bouncy", "smooth", "snappy", "interactiveSpring",
+    ]
+
+    public static func animation(named name: String) -> Animation? {
+        switch name.lowercased() {
+        case "default": return .default
+        case "easein": return .easeIn
+        case "easeout": return .easeOut
+        case "easeinout": return .easeInOut
+        case "linear": return .linear
+        case "spring": return .spring()
+        case "bouncy": return .bouncy
+        case "smooth": return .smooth
+        case "snappy": return .snappy
+        case "interactivespring": return .interactiveSpring()
+        default: return nil
+        }
+    }
+
+    // MARK: - Transitions
+
+    public static let transitionNames = [
+        "opacity", "slide", "scale", "identity",
+        "moveLeading", "moveTrailing", "moveTop", "moveBottom",
+        "push",
+    ]
+
+    public static func transition(named name: String) -> AnyTransition? {
+        switch name.lowercased() {
+        case "opacity": return .opacity
+        case "slide": return .slide
+        case "scale": return .scale
+        case "identity": return .identity
+        case "moveleading": return .move(edge: .leading)
+        case "movetrailing": return .move(edge: .trailing)
+        case "movetop": return .move(edge: .top)
+        case "movebottom": return .move(edge: .bottom)
+        case "push": return .push(from: .trailing)
+        default: return nil
+        }
+    }
+
+    // MARK: - Content Transitions
+
+    public static let contentTransitionNames = [
+        "opacity", "interpolate", "numericText", "identity",
+    ]
+
+    // MARK: - Symbol Effects
+
+    public static let symbolEffectNames = [
+        "bounce", "pulse", "variableColor", "scale",
+    ]
+
+    // MARK: - List Styles
+
+    public static let listStyleNames = [
+        "automatic", "plain", "grouped", "insetGrouped", "sidebar",
+    ]
+
+    // MARK: - Clip Shapes
+
+    public static let clipShapeNames = [
+        "circle", "capsule", "rectangle", "ellipse",
+    ]
+
+    // MARK: - Enum Type Registration
+
     /// All enum-like types with their case names, used for bridge static property registration.
     public static let enumTypes: [(typeName: String, caseNames: [String])] = [
         ("Font", fontNames),
@@ -59,6 +132,18 @@ public enum SwiftUIConstants {
         ("Edge", ["top", "bottom", "leading", "trailing"]),
         ("ContentMode", ["fit", "fill"]),
         ("Axis", ["horizontal", "vertical"]),
+        ("Animation", animationNames),
+        ("AnyTransition", transitionNames),
+        ("ContentTransition", contentTransitionNames),
+        ("SymbolEffect", symbolEffectNames),
+        ("ListStyle", listStyleNames),
+        ("ClipShape", clipShapeNames),
     ]
+
+    /// Extract the case name from a Value that's either an enum case or a string.
+    public static func caseName(from value: Value) -> String? {
+        if case .enumCase(let ref) = value { return ref.caseName }
+        return value.stringValue
+    }
 }
 #endif

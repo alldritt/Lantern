@@ -214,3 +214,45 @@ VStack {
     }
 }
 // END
+
+// === Enum-Style Modifiers ===
+
+// TEST: animation_enum
+// EXPECT: VIEW
+Text("Hi").animation(.easeIn, true)
+// END
+
+// TEST: transition_enum
+// EXPECT: VIEW
+Text("Hi").transition(.slide)
+// END
+
+// TEST: content_transition_enum
+// EXPECT: VIEW
+Text("Hi").contentTransition(.opacity)
+// END
+
+// TEST: symbol_effect_enum
+// EXPECT: VIEW
+Image("star").symbolEffect(.bounce)
+// END
+
+// TEST: list_style_enum
+// EXPECT: VIEW
+List { Text("Item") }.listStyle(.plain)
+// END
+
+// TEST: clip_shape_enum
+// EXPECT: VIEW
+Text("Hi").clipShape(.circle)
+// END
+
+// TEST: background_color_enum_style
+// EXPECT: VIEW
+Text("Hi").background(.green).foregroundColor(.white)
+// END
+
+// TEST: tint_color_enum
+// EXPECT: VIEW
+Text("Hi").tint(.orange)
+// END

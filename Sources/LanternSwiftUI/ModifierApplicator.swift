@@ -100,8 +100,13 @@ public struct ModifierApplicator {
             modified = AnyView(view.clipShape(RoundedRectangle(cornerRadius: CGFloat(radius))))
 
         case "clipShape":
-            // Default to circle for now
-            modified = AnyView(view.clipShape(Circle()))
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "rectangle"
+            switch name.lowercased() {
+            case "circle": modified = AnyView(view.clipShape(Circle()))
+            case "capsule": modified = AnyView(view.clipShape(Capsule()))
+            case "ellipse": modified = AnyView(view.clipShape(Ellipse()))
+            default: modified = AnyView(view.clipShape(Rectangle()))
+            }
 
         case "shadow":
             let radius = arguments.first?.doubleValue ?? 5
@@ -155,12 +160,13 @@ public struct ModifierApplicator {
 
         // List styling
         case "listStyle":
-            let style = arguments.first?.stringValue ?? "automatic"
-            switch style {
+            let style = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "automatic"
+            switch style.lowercased() {
             case "plain": modified = AnyView(view.listStyle(.plain))
             #if os(iOS)
             case "grouped": modified = AnyView(view.listStyle(.grouped))
-            case "insetGrouped": modified = AnyView(view.listStyle(.insetGrouped))
+            case "insetgrouped": modified = AnyView(view.listStyle(.insetGrouped))
+            case "sidebar": modified = AnyView(view.listStyle(.sidebar))
             #endif
             default: modified = AnyView(view.listStyle(.automatic))
             }
@@ -175,19 +181,17 @@ public struct ModifierApplicator {
             modified = AnyView(view.transition(transition))
 
         case "contentTransition":
-            let name = arguments.first?.stringValue ?? "identity"
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "identity"
             switch name.lowercased() {
             case "opacity": modified = AnyView(view.contentTransition(.opacity))
             case "interpolate": modified = AnyView(view.contentTransition(.interpolate))
             case "numerictext": modified = AnyView(view.contentTransition(.numericText()))
-            case "identity": modified = AnyView(view.contentTransition(.identity))
             default: modified = AnyView(view.contentTransition(.identity))
             }
 
         case "symbolEffect":
-            let name = arguments.first?.stringValue ?? "bounce"
+            let name = arguments.first.flatMap { SwiftUIConstants.caseName(from: $0) } ?? "bounce"
             switch name.lowercased() {
-            case "bounce": modified = AnyView(view.symbolEffect(.bounce))
             case "pulse": modified = AnyView(view.symbolEffect(.pulse))
             case "variablecolor": modified = AnyView(view.symbolEffect(.variableColor))
             case "scale": modified = AnyView(view.symbolEffect(.scale.up))
@@ -286,20 +290,10 @@ public struct ModifierApplicator {
     public static func parseAnimation(from args: [Value]) -> Animation {
         guard let first = args.first else { return .default }
 
-        if let name = first.stringValue {
-            switch name.lowercased() {
-            case "default": return .default
-            case "easein": return .easeIn
-            case "easeout": return .easeOut
-            case "easeinout": return .easeInOut
-            case "linear": return .linear
-            case "spring": return .spring()
-            case "bouncy": return .bouncy
-            case "smooth": return .smooth
-            case "snappy": return .snappy
-            case "interactivespring": return .interactiveSpring()
-            default: return .default
-            }
+        // Accept both enum case (.easeIn) and string ("easeIn")
+        if let name = SwiftUIConstants.caseName(from: first),
+           let anim = SwiftUIConstants.animation(named: name) {
+            return anim
         }
 
         // Duration as number: .animation(0.3) → .easeInOut(duration:)
@@ -310,25 +304,12 @@ public struct ModifierApplicator {
         return .default
     }
 
-    /// Parse transition type from arguments.
-    /// Accepts: "opacity", "slide", "scale", "move", "push",
-    /// "asymmetric", or combined.
     public static func parseTransition(from args: [Value]) -> AnyTransition {
         guard let first = args.first else { return .opacity }
 
-        if let name = first.stringValue {
-            switch name.lowercased() {
-            case "opacity": return .opacity
-            case "slide": return .slide
-            case "scale": return .scale
-            case "identity": return .identity
-            case "moveleading": return .move(edge: .leading)
-            case "movetrailing": return .move(edge: .trailing)
-            case "movetop": return .move(edge: .top)
-            case "movebottom": return .move(edge: .bottom)
-            case "push": return .push(from: .trailing)
-            default: return .opacity
-            }
+        if let name = SwiftUIConstants.caseName(from: first),
+           let transition = SwiftUIConstants.transition(named: name) {
+            return transition
         }
 
         return .opacity
