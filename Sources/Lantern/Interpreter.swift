@@ -47,8 +47,10 @@ public final class Interpreter {
         #endif
         #endif
         registerBridgeTypesAsGlobals()
-        // Tell the compiler about bridge type names so they aren't treated as self.property
-        compiler.externalGlobals = Set(bridge.registeredTypes)
+        // Tell the compiler about bridge type names AND core types so they aren't treated as self.property
+        var globals = Set(bridge.registeredTypes)
+        globals.formUnion(["Int", "Double", "Float", "Bool", "String", "Array", "Dictionary", "Result"])
+        compiler.externalGlobals = globals
         // Tell the compiler about static members for implicit member resolution (.title → Font.title)
         var staticMembers: Set<String> = []
         for typeName in bridge.registeredTypes {
