@@ -396,6 +396,7 @@ private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
             // Invoke trailing closure with a ViewCollector to gather ALL child views.
             // The VM's pop opcode intercepts ViewBox values when a collector is active.
             let collector = ViewCollector()
+            collector.viewCollectorVM = vm
             var childBox = ViewBox(AnyView(EmptyView()))
 
             // Record container in descriptor tree
@@ -417,6 +418,9 @@ private func registerContainerTypes(on registry: BridgeRegistry, vm: VM) {
                 // The closure's return value (last expression) is also a view
                 if case .hostObject(let ref) = result, let box = ref.object as? ViewBox {
                     collector.views.append(box.view)
+                } else {
+                    // May be a View-conforming instance — let the collector handle it
+                    collector.collectView(result)
                 }
 
                 // Build combined view from all collected children

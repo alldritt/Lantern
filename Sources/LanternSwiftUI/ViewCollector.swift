@@ -17,12 +17,33 @@ public final class ViewCollector: ViewCollectorProtocol {
     }
 
     /// Called by VM's pop opcode when collector is active.
-    /// Only collects hostObject ViewBox values (actual views).
+    /// Collects hostObject ViewBox values (bridge views) and View-conforming instances.
     public func collectView(_ value: Value) {
         if case .hostObject(let ref) = value, let box = ref.object as? ViewBox {
             views.append(box.view)
+        } else if case .instance(let ref) = value, let vm = viewCollectorVM {
+            // Check if this is a View-conforming instance — wrap in ViewStub
+            if let typeInfo = vm.currentProgram?.typeTable.first(where: { $0.name == ref.typeName }),
+               typeInfo.conformances.contains("View") {
+                let getterName = "\(ref.typeName).__get_body"
+                if let getter = vm.environment.getGlobal(getterName) {
+                    let savedCtx = vm.swiftUIContext
+                    do {
+                        let bodyResult = try vm.invokeValue(getter, args: [.instance(ref)])
+                        if case .hostObject(let bodyRef) = bodyResult, let box = bodyRef.object as? ViewBox {
+                            views.append(box.view)
+                        }
+                    } catch {
+                        // Silently skip failed view evaluations
+                    }
+                    vm.swiftUIContext = savedCtx
+                }
+            }
         }
     }
+
+    /// VM reference for evaluating View-conforming instances. Set by container constructors.
+    public weak var viewCollectorVM: VM?
 
     /// Group the last N collected views into a single container value.
     public func groupViews(_ count: Int) -> Value {

@@ -695,6 +695,46 @@ struct SwiftUIIntegrationTests {
         #expect(value.hostObjectRef?.object is ViewBox)
     }
 
+    @Test func userDefinedViewInContainerClosure() {
+        let interp = Interpreter()
+        let result = interp.run(source: """
+        struct Card: View {
+            let label: String
+            var body: some View {
+                Text(label).padding()
+            }
+        }
+        VStack {
+            Card(label: "A")
+            Card(label: "B")
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        #expect(value.hostObjectRef?.typeName == "VStack", "Container should be VStack")
+    }
+
+    @Test func userDefinedViewInForLoop() {
+        let interp = Interpreter()
+        let result = interp.run(source: """
+        struct Item: View {
+            let n: Int
+            var body: some View { Text("\\(n)") }
+        }
+        let items = [1, 2, 3]
+        VStack {
+            for i in 0..<items.count {
+                Item(n: items[i])
+            }
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        #expect(value.hostObjectRef?.typeName == "VStack", "VStack should contain user-defined views from for loop")
+    }
+
     @Test func forEachViewCompiles() {
         let interp = Interpreter()
         let result = interp.run(source: """
