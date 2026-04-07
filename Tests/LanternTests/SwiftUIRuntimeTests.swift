@@ -735,6 +735,165 @@ struct SwiftUIIntegrationTests {
         #expect(value.hostObjectRef?.typeName == "VStack", "VStack should contain user-defined views from for loop")
     }
 
+    @Test func userViewsWithDifferentProperties() {
+        // Core test: multiple View instances with different data produce different views
+        let interp = Interpreter()
+        let output = CapturedOutputHandler()
+        interp.outputHandler = output
+        let result = interp.run(source: """
+        struct Card: View {
+            let n: Int
+            var body: some View {
+                if n > 5 {
+                    Text("big")
+                } else {
+                    Text("small")
+                }
+            }
+        }
+        VStack {
+            Card(n: 3)
+            Card(n: 10)
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        #expect(value.hostObjectRef?.typeName == "VStack")
+    }
+
+    @Test func ifElseWithPropertyComparison() {
+        let interp = Interpreter()
+        let output = CapturedOutputHandler()
+        interp.outputHandler = output
+        let result = interp.run(source: """
+        struct Item: View {
+            let priority: String
+            var body: some View {
+                if priority == "high" {
+                    print("high branch")
+                    Text("HIGH")
+                } else if priority == "medium" {
+                    print("medium branch")
+                    Text("MED")
+                } else {
+                    print("low branch")
+                    Text("LOW")
+                }
+            }
+        }
+        VStack {
+            Item(priority: "high")
+            Item(priority: "medium")
+            Item(priority: "low")
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        #expect(value.hostObjectRef?.typeName == "VStack")
+        // Check that different branches were taken
+        let printed = output.printOutput.joined()
+        #expect(printed.contains("high branch"), "Should take high branch for priority='high'")
+        #expect(printed.contains("medium branch"), "Should take medium branch for priority='medium'")
+        #expect(printed.contains("low branch"), "Should take low branch for priority='low'")
+    }
+
+    @Test func ifElseWithBoolProperty() {
+        let interp = Interpreter()
+        let output = CapturedOutputHandler()
+        interp.outputHandler = output
+        let result = interp.run(source: """
+        struct Toggle: View {
+            let on: Bool
+            var body: some View {
+                if on {
+                    print("on branch")
+                    Text("ON")
+                } else {
+                    print("off branch")
+                    Text("OFF")
+                }
+            }
+        }
+        VStack {
+            Toggle(on: true)
+            Toggle(on: false)
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        let printed = output.printOutput.joined()
+        #expect(printed.contains("on branch"), "Should take on branch for on=true")
+        #expect(printed.contains("off branch"), "Should take off branch for on=false")
+    }
+
+    @Test func switchInContainerClosure() {
+        let interp = Interpreter()
+        let output = CapturedOutputHandler()
+        interp.outputHandler = output
+        let result = interp.run(source: """
+        let x = "b"
+        VStack {
+            switch x {
+            case "a":
+                print("case a")
+                Text("A")
+            case "b":
+                print("case b")
+                Text("B")
+            default:
+                print("default")
+                Text("?")
+            }
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        #expect(value.hostObjectRef?.typeName == "VStack")
+        let printed = output.printOutput.joined()
+        #expect(printed.contains("case b"), "Should take case b")
+        #expect(!printed.contains("case a"), "Should NOT take case a")
+    }
+
+    @Test func switchInViewBody() {
+        let interp = Interpreter()
+        let output = CapturedOutputHandler()
+        interp.outputHandler = output
+        let result = interp.run(source: """
+        struct Badge: View {
+            let level: String
+            var body: some View {
+                switch level {
+                case "high":
+                    print("high")
+                    Text("HIGH").foregroundColor(.red)
+                case "medium":
+                    print("medium")
+                    Text("MED").foregroundColor(.orange)
+                default:
+                    print("low")
+                    Text("LOW").foregroundColor(.blue)
+                }
+            }
+        }
+        VStack {
+            Badge(level: "high")
+            Badge(level: "medium")
+            Badge(level: "low")
+        }
+        """)
+        guard case .success(let value) = result else {
+            Issue.record("Failed: \(result)"); return
+        }
+        let printed = output.printOutput.joined()
+        #expect(printed.contains("high"), "Should take high case")
+        #expect(printed.contains("medium"), "Should take medium case")
+        #expect(printed.contains("low"), "Should take low case")
+    }
+
     @Test func forEachViewCompiles() {
         let interp = Interpreter()
         let result = interp.run(source: """
