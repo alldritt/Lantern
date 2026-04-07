@@ -60,12 +60,7 @@ extension BytecodeCompiler {
                 Instruction.getProperty(nameIndex, into: &chunk)
             }
         } else if expr is SelfNode {
-            // self is at slot 0 in methods, or at the declared slot in custom inits
-            if let resolved = scopeTracker.resolve("self") {
-                Instruction.loadLocal(resolved.slot, into: &chunk)
-            } else {
-                Instruction.loadLocal(0, into: &chunk)
-            }
+            emitLoadSelf()
         } else if let typeRef = expr as? TypeReferenceNode {
             let nameIndex = chunk.constantPool.addString(typeRef.typeName)
             Instruction.loadGlobal(nameIndex, into: &chunk)
@@ -177,6 +172,22 @@ extension BytecodeCompiler {
         return false
     }
 
+    /// Emit bytecode to load `self` — handles locals, captures from outer scope, and fallback.
+    func emitLoadSelf() {
+        if let selfLocal = scopeTracker.resolve("self") {
+            Instruction.loadLocal(selfLocal.slot, into: &chunk)
+        } else if let captureIdx = capturedNames.firstIndex(of: "self") {
+            chunk.write(.loadCapture)
+            chunk.writeU16(UInt16(captureIdx))
+        } else if !outerLocals.isEmpty, outerLocals.contains(where: { $0.name == "self" }) {
+            capturedNames.append("self")
+            chunk.write(.loadCapture)
+            chunk.writeU16(UInt16(capturedNames.count - 1))
+        } else {
+            Instruction.loadLocal(0, into: &chunk)
+        }
+    }
+
     func isKnownGlobal(_ name: String) -> Bool {
         Self.knownBuiltins.contains(name) || externalGlobals.contains(name)
     }
@@ -224,11 +235,7 @@ extension BytecodeCompiler {
             }
             if bindingPropertyNames.contains(propName) {
                 // @Binding: load the BindingRef from the instance property
-                if let selfLocal = scopeTracker.resolve("self") {
-                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
-                } else {
-                    Instruction.loadLocal(0, into: &chunk)
-                }
+                emitLoadSelf()
                 let nameIndex = chunk.constantPool.addPropertyName(propName)
                 Instruction.getProperty(nameIndex, into: &chunk)
                 return
@@ -262,11 +269,7 @@ extension BytecodeCompiler {
                 chunk.writeU16(nameIndex)
             } else if isCompilingViewType && bindingPropertyNames.contains(ident.name) {
                 // @Binding: load BindingRef from instance, read through it
-                if let selfLocal = scopeTracker.resolve("self") {
-                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
-                } else {
-                    Instruction.loadLocal(0, into: &chunk)
-                }
+                emitLoadSelf()
                 let nameIndex = chunk.constantPool.addPropertyName(ident.name)
                 Instruction.getProperty(nameIndex, into: &chunk)
                 // The property value is a BindingRef — the VM's getProperty
@@ -278,11 +281,7 @@ extension BytecodeCompiler {
                 chunk.write(.stateGet)
                 chunk.writeU16(nameIndex)
             } else {
-                if let selfLocal = scopeTracker.resolve("self") {
-                    Instruction.loadLocal(selfLocal.slot, into: &chunk)
-                } else {
-                    Instruction.loadLocal(0, into: &chunk)
-                }
+                emitLoadSelf()
                 let nameIndex = chunk.constantPool.addPropertyName(ident.name)
                 Instruction.getProperty(nameIndex, into: &chunk)
             }
@@ -545,11 +544,7 @@ extension BytecodeCompiler {
                     chunk.write(.constNil)
                 } else if publishedPropertyNames.contains(ident.name) {
                     // @Published property: use publishSet to trigger objectWillChange
-                    if let selfLocal = scopeTracker.resolve("self") {
-                        Instruction.loadLocal(selfLocal.slot, into: &chunk)
-                    } else {
-                        Instruction.loadLocal(0, into: &chunk)
-                    }
+                    emitLoadSelf()
                     compileExpression(assign.value)
                     let nameIndex = chunk.constantPool.addPropertyName(ident.name)
                     chunk.write(.publishSet)
@@ -557,11 +552,7 @@ extension BytecodeCompiler {
                     chunk.write(.constNil)
                 } else {
                     // setProperty expects stack: [self, value] — pops val (top), then inst
-                    if let selfLocal = scopeTracker.resolve("self") {
-                        Instruction.loadLocal(selfLocal.slot, into: &chunk)
-                    } else {
-                        Instruction.loadLocal(0, into: &chunk)
-                    }
+                    emitLoadSelf()
                     compileExpression(assign.value)
                     let nameIndex = chunk.constantPool.addPropertyName(ident.name)
                     Instruction.setProperty(nameIndex, into: &chunk)
